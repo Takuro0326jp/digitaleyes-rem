@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1300">
+<title>接客スケジュール | Real Estate Manager by DIGITALEYES</title>
+<link rel="stylesheet" href="common.css">
+<style>
+.week-nav { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.week-nav h2 { font-size: 16px; font-weight: 600; }
+.schedule-wrap { overflow-x: auto; }
+.schedule-table { width: 100%; border-collapse: collapse; min-width: 900px; }
+.schedule-table th { background: rgb(70,83,98); color: #fff; padding: 8px 10px; text-align: center; font-size: 13px; border: 1px solid rgb(90,103,118); }
+.schedule-table th.today-col { background: rgb(53,124,176); }
+.schedule-table td { border: 1px solid rgb(224,224,224); padding: 4px; vertical-align: top; min-height: 70px; height: 70px; width: 14%; }
+.schedule-table td.time-col { background: rgba(224,224,224,0.2); text-align: center; font-size: 11px; color: rgb(120,130,140); width: 60px; vertical-align: middle; }
+.schedule-table td.today-col { background: rgba(53,124,176,0.05); }
+.event-block { background: rgb(53,124,176); color: #fff; border-radius: 2px; padding: 2px 6px; font-size: 11px; margin-bottom: 2px; cursor: pointer; }
+.event-block:hover { background: rgb(40,100,150); }
+.event-block.visit { background: rgb(53,124,176); }
+.event-block.revisit { background: rgb(80,150,80); }
+.event-block.reserved { background: rgb(200,150,50); }
+.legend { display: flex; gap: 16px; margin-bottom: 12px; font-size: 12px; align-items: center; }
+.legend-item { display: flex; align-items: center; gap: 4px; }
+.legend-dot { width: 12px; height: 12px; border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="wrapper">
+<div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="page-title-bar">
+      <h1>接客スケジュール</h1>
+    </div>
+
+    <div class="week-nav">
+      <button class="btn" onclick="changeWeek(-1)">＜ 前週</button>
+      <h2 id="weekLabel"></h2>
+      <button class="btn" onclick="changeWeek(1)">次週 ＞</button>
+      <button class="btn" onclick="goToday()" style="margin-left:8px">今週</button>
+    </div>
+
+    <div class="legend">
+      <span class="legend-item"><span class="legend-dot" style="background:rgb(53,124,176)"></span>新規来場</span>
+      <span class="legend-item"><span class="legend-dot" style="background:rgb(80,150,80)"></span>再来場</span>
+      <span class="legend-item"><span class="legend-dot" style="background:rgb(200,150,50)"></span>来場予約</span>
+    </div>
+
+    <div id="tableArea"><div class="loading-spinner"></div></div>
+  </main>
+</div>
+</div>
+
+<script src="common.js"></script>
+<script>
+const DAYS = ["日","月","火","水","木","金","土"];
+const TIMES = ["10:00","11:00","12:00","13:00","14:00","15:00","16:00","17:00","18:00"];
+let weekOffset = 0;
+
+function getWeekDates(offset) {
+  const today = new Date();
+  const day = today.getDay();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - day + 1 + offset * 7);
+  const dates = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    dates.push(d);
+  }
+  return dates;
+}
+
+function fmt(d) { return `${d.getMonth()+1}/${d.getDate()}`; }
+function isToday(d) {
+  const t = new Date();
+  return d.getFullYear()===t.getFullYear() && d.getMonth()===t.getMonth() && d.getDate()===t.getDate();
+}
+
+async function load() {
+  document.getElementById("tableArea").innerHTML = '<div class="loading-spinner"></div>';
+  const dates = getWeekDates(weekOffset);
+  const start = dates[0], end = dates[6];
+  const startStr = `${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,'0')}-${String(start.getDate()).padStart(2,'0')}`;
+  const endStr = `${end.getFullYear()}-${String(end.getMonth()+1).padStart(2,'0')}-${String(end.getDate()).padStart(2,'0')}`;
+  document.getElementById("weekLabel").textContent = `${start.getFullYear()}年${fmt(start)} 〜 ${fmt(end)}`;
+
+  try {
+    const data = await apiCall({
+      limit: 100,
+      fields: JSON.stringify(["c.id","c.name","c.status","c.date_visit","c.rr_date","c.baitai"]),
+      conditions: JSON.stringify([{"c.date_visit >=": startStr, "c.date_visit <=": endStr}])
+    });
+    const customers = data.result || [];
+
+    // 日付→顧客マッピング
+    const dateMap = {};
+    dates.forEach(d => dateMap[d.toISOString().slice(0,10)] = []);
+    customers.forEach(c => {
+      const dv = c["c.date_visit"];
+      if (dv && dateMap[dv]) dateMap[dv].push(c);
+    });
+
+    let html = `<div class="schedule-wrap"><table class="schedule-table"><thead><tr>
+      <th style="width:60px">時間</th>
+      ${dates.map(d => `<th class="${isToday(d)?"today-col":""}">${DAYS[d.getDay()]} ${fmt(d)}</th>`).join("")}
+    </tr></thead><tbody>`;
+
+    TIMES.forEach(time => {
+      html += `<tr><td class="time-col">${time}</td>`;
+      dates.forEach(d => {
+        const key = d.toISOString().slice(0,10);
+        const events = (dateMap[key]||[]).filter(c => {
+          const rr = c["c.rr_date"]||"";
+          return rr.includes(time.replace(":",""));
+        });
+        html += `<td class="${isToday(d)?"today-col":""}">`;
+        events.forEach(c => {
+          const cls = c["c.status"]==="新規来場"?"visit":c["c.status"]==="再来場"?"revisit":"reserved";
+          html += `<div class="event-block ${cls}">${c["c.name"]||"来場予約"}</div>`;
+        });
+        html += `</td>`;
+      });
+      html += `</tr>`;
+    });
+
+    // 来場日あるが時間なし
+    html += `<tr><td class="time-col" style="font-size:10px">未定</td>`;
+    dates.forEach(d => {
+      const key = d.toISOString().slice(0,10);
+      const events = (dateMap[key]||[]).filter(c => !c["c.rr_date"]);
+      html += `<td class="${isToday(d)?"today-col":""}">`;
+      events.forEach(c => {
+        const cls = c["c.status"]==="新規来場"?"visit":c["c.status"]==="再来場"?"revisit":"reserved";
+        html += `<div class="event-block ${cls}">${c["c.name"]||"来場"}</div>`;
+      });
+      html += `</td>`;
+    });
+    html += `</tr></tbody></table></div>`;
+
+    // 週の来場者一覧
+    const allWeek = Object.values(dateMap).flat();
+    if (allWeek.length > 0) {
+      html += `<div style="margin-top:24px">
+        <div class="section-header"><h2 class="section-heading">今週の来場者一覧（${allWeek.length}件）</h2></div>
+        <table class="list-table"><thead><tr><th>来場日</th><th>顧客名</th><th>ステータス</th><th>反響媒体</th></tr></thead><tbody>
+        ${allWeek.map(c=>`<tr>
+          <td>${c["c.date_visit"]||""}</td>
+          <td style="font-weight:600"><a href="customer.html">${c["c.name"]||""}</a></td>
+          <td>${statusBadge(c["c.status"])}</td>
+          <td>${baitaiBadge(c["c.baitai"])}</td>
+        </tr>`).join("")}
+        </tbody></table>
+      </div>`;
+    } else {
+      html += `<div class="empty-msg" style="margin-top:16px">この週の来場予定はありません</div>`;
+    }
+
+    document.getElementById("tableArea").innerHTML = html;
+  } catch(e) {
+    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`;
+  }
+}
+
+function changeWeek(d) { weekOffset += d; load(); }
+function goToday() { weekOffset = 0; load(); }
+
+(async () => {
+  if (!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("schedule.html");
+  load();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1300">
+<title>顧客一覧 | Real Estate Manager by DIGITALEYES</title>
+<link rel="stylesheet" href="common.css">
+</head>
+<body>
+<div id="wrapper">
+<div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="page-title-bar">
+      <h1>顧客一覧</h1>
+      <span id="totalLabel" style="font-size:13px;color:rgb(120,130,140)">読み込み中...</span>
+    </div>
+
+    <!-- アクションボタン -->
+    <div class="action-row">
+      <button class="btn btn-primary-solid" onclick="void 0">分析表</button>
+      <button class="btn" onclick="exportAll()">CSVダウンロード（全データ）</button>
+      <button class="btn" id="btnCsvSel" onclick="exportSelected()" disabled>CSVダウンロード（選択したデータ）</button>
+      <button class="btn" onclick="void 0">ラベル印刷</button>
+      <button class="btn" id="btnSelAll" onclick="toggleAll()" style="margin-left:auto">全て選択</button>
+    </div>
+
+    <!-- 検索フィルター -->
+    <div class="filter-bar">
+      <div class="filter-item">
+        <label>キーワード</label>
+        <input type="text" id="fKeyword" placeholder="顧客名で検索" onkeydown="if(event.key==='Enter')search()">
+      </div>
+      <div class="filter-item">
+        <label>都道府県</label>
+        <select id="fState"><option value="">すべて</option></select>
+      </div>
+      <div class="filter-item">
+        <label>反響メディア</label>
+        <select id="fBaitai"><option value="">すべて</option><option>公式HP</option><option>SUUMO</option></select>
+      </div>
+      <div class="filter-item">
+        <label>ステータス</label>
+        <select id="fStatus"><option value="">すべて</option></select>
+      </div>
+      <div>
+        <button class="btn btn-primary-solid" onclick="search()">検索</button>
+        <button class="btn" onclick="clearFilters()" style="margin-left:4px">クリア</button>
+      </div>
+    </div>
+
+    <!-- 詳細フィルター -->
+    <div style="margin-bottom:16px">
+      <button class="btn btn-sm" onclick="toggleDetail()" id="btnDetail">▼ 詳しい検索条件を設定する</button>
+      <div id="detailFilters" style="display:none;margin-top:10px">
+        <div class="filter-bar">
+          <div class="filter-item"><label>ご家族人数</label><select id="fNinzu"><option value="">すべて</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6以上</option></select></div>
+          <div class="filter-item"><label>予算</label><select id="fYosan"><option value="">すべて</option></select></div>
+          <div class="filter-item"><label>自己資金</label><select id="fJikosikin"><option value="">すべて</option></select></div>
+          <div class="filter-item"><label>ご希望の間取り</label><select id="fMadori"><option value="">すべて</option><option>1LDK</option><option>2LDK</option><option>3LDK</option><option>4LDK</option><option>5LDK</option></select></div>
+          <div class="filter-item"><label>ご希望の面積</label><select id="fMenseki"><option value="">すべて</option><option>40㎡未満</option><option>40㎡～</option><option>50㎡～</option><option>60㎡～</option><option>65㎡～</option><option>70㎡～</option><option>75㎡～</option><option>80㎡～</option><option>90㎡～</option><option>100㎡～</option></select></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- テーブル -->
+    <div id="tableArea"></div>
+    <div class="pagination" id="pagination"></div>
+  </main>
+</div>
+</div>
+
+<!-- 詳細モーダル -->
+<div class="modal-overlay" id="modal" style="display:none" onclick="closeModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="modalTitle">顧客詳細</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <dl class="detail-grid" id="modalBody"></dl>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+const LIMIT = 20;
+const PREFS = ["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"];
+const STATUSES = ["資料請求・エントリー","来場予約","新規来場","再来場","再々来場1","要望","登録","申込","契約","引渡","検討中止"];
+const YOSAN = ["～3000万円","～3500万円","～4000万円","～4500万円","～5000万円","～5500万円","～6000万円","～6500万円","～7000万円","～7500万円","～8000万円"];
+const JIKOSIKIN = ["〜100万円","〜200万円","〜300万円","〜400万円","〜500万円","〜600万円","〜700万円","〜800万円","〜900万円","〜1000万円","〜1200万円","〜1500万円","〜2000万円"];
+const FIELDS = ["c.id","c.name","c.kana","c.mail","c.tel","c.state","c.city","c.town","c.address","c.tatemono","c.baitai","c.upd_date","c.status","c.sex","c.birth","c.ninzu","c.yosan","c.jikosikin","c.questionnaire23","c.questionnaire24","c.questionnaire30","c.questionnaire41","c.date_entry","c.ins_date","c.moyori","c.work","c.zip","c.questionnaire50","c.questionnaire49","c.questionnaire51","c.questionnaire52"];
+
+let customers = [], totalCount = 0, currentPage = 1, selected = new Set(), showDetail = false;
+
+// セレクト初期化
+const addOpts = (id, arr) => { const el = document.getElementById(id); arr.forEach(v => el.innerHTML += `<option>${v}</option>`); };
+addOpts("fState", PREFS); addOpts("fStatus", STATUSES); addOpts("fYosan", YOSAN); addOpts("fJikosikin", JIKOSIKIN);
+
+function getFilters() {
+  return {
+    keyword: document.getElementById("fKeyword").value,
+    state: document.getElementById("fState").value,
+    baitai: document.getElementById("fBaitai").value,
+    status: document.getElementById("fStatus").value,
+    ninzu: document.getElementById("fNinzu").value,
+    yosan: document.getElementById("fYosan").value,
+    jikosikin: document.getElementById("fJikosikin").value,
+    madori: document.getElementById("fMadori").value,
+    menseki: document.getElementById("fMenseki").value,
+  };
+}
+
+function search() { currentPage = 1; load(); }
+function clearFilters() {
+  ["fKeyword"].forEach(id => document.getElementById(id).value = "");
+  ["fState","fBaitai","fStatus","fNinzu","fYosan","fJikosikin","fMadori","fMenseki"].forEach(id => document.getElementById(id).value = "");
+  search();
+}
+function toggleDetail() {
+  showDetail = !showDetail;
+  document.getElementById("detailFilters").style.display = showDetail ? "block" : "none";
+  document.getElementById("btnDetail").textContent = (showDetail ? "▲" : "▼") + " 詳しい検索条件を設定する";
+}
+
+async function load() {
+  document.getElementById("tableArea").innerHTML = '<div class="loading-spinner"></div>';
+  document.getElementById("pagination").innerHTML = "";
+  selected = new Set(); updateSelBtn();
+
+  try {
+    const f = getFilters();
+    const cond = {};
+    if (f.keyword) cond["c.name like"] = `%${f.keyword}%`;
+    if (f.state) cond["c.state"] = f.state;
+    if (f.baitai) cond["c.baitai"] = f.baitai;
+    if (f.status) cond["c.status"] = f.status;
+    if (f.ninzu) cond["c.ninzu"] = f.ninzu;
+    if (f.yosan) cond["c.yosan"] = f.yosan;
+    if (f.jikosikin) cond["c.jikosikin"] = f.jikosikin;
+    if (f.madori) cond["c.questionnaire23"] = f.madori;
+    if (f.menseki) cond["c.questionnaire24"] = f.menseki;
+
+    const params = { limit: LIMIT, page: currentPage, order: JSON.stringify(["c.upd_date desc"]), fields: JSON.stringify(FIELDS) };
+    if (Object.keys(cond).length) params.conditions = JSON.stringify([cond]);
+
+    const data = await apiCall(params);
+    customers = data.result || [];
+    totalCount = parseTotalCount(data);
+    document.getElementById("totalLabel").textContent = `総件数: ${totalCount.toLocaleString()}件`;
+    renderTable(); renderPagination();
+  } catch(e) {
+    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`;
+  }
+}
+
+function renderTable() {
+  if (!customers.length) { document.getElementById("tableArea").innerHTML = '<div class="empty-msg">データが見つかりませんでした</div>'; return; }
+  let html = `<div class="table-scroll"><table class="list-table">
+    <thead><tr>
+      <th style="width:36px"><input type="checkbox" id="chkAll" onclick="toggleAll()"></th>
+      <th>顧客ID</th><th>顧客名</th><th>ステータス</th><th>E-mail</th><th>都道府県</th><th>市区町村</th><th>反響メディア</th><th>反響日</th><th>更新日</th>
+    </tr></thead><tbody>`;
+  customers.forEach((c, i) => {
+    const id = c["c.id"];
+    const addr = [c["c.city"], c["c.town"]].filter(Boolean).join(" ");
+    html += `<tr onclick="openModal(${i})">
+      <td onclick="event.stopPropagation();toggleSel(${JSON.stringify(id)})"><input type="checkbox" ${selected.has(id)?"checked":""} onclick="event.stopPropagation();toggleSel(${JSON.stringify(id)})"></td>
+      <td style="color:rgb(120,130,140)">${id||""}</td>
+      <td style="font-weight:600">${c["c.name"]||""}<br><span style="font-size:11px;color:rgb(150,160,170)">${c["c.kana"]||""}</span></td>
+      <td>${statusBadge(c["c.status"])}</td>
+      <td style="color:rgb(53,124,176)">${c["c.mail"]||""}</td>
+      <td>${c["c.state"]||""}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${addr}</td>
+      <td>${baitaiBadge(c["c.baitai"])}</td>
+      <td style="white-space:nowrap">${c["c.date_entry"]||""}</td>
+      <td style="white-space:nowrap;color:rgb(150,160,170)">${c["c.upd_date"]?c["c.upd_date"].slice(0,10):""}</td>
+    </tr>`;
+  });
+  html += "</tbody></table></div>";
+  document.getElementById("tableArea").innerHTML = html;
+}
+
+function renderPagination() {
+  const total = Math.ceil(totalCount / LIMIT);
+  if (total <= 1) return;
+  const start = Math.max(1, currentPage-4), end = Math.min(total, start+8);
+  let html = `<button onclick="goPage(${currentPage-1})" ${currentPage===1?"disabled":""}>＜</button>`;
+  for (let i = start; i <= end; i++) html += `<button class="${i===currentPage?"active":""}" onclick="goPage(${i})">${i}</button>`;
+  html += `<button onclick="goPage(${currentPage+1})" ${currentPage===total?"disabled":""}>＞</button>`;
+  document.getElementById("pagination").innerHTML = html;
+}
+
+function goPage(p) {
+  const t = Math.ceil(totalCount/LIMIT);
+  if (p<1||p>t) return;
+  currentPage = p; load(); window.scrollTo(0,0);
+}
+
+function toggleSel(id) {
+  if (selected.has(id)) selected.delete(id); else selected.add(id);
+  updateSelBtn(); renderTable();
+}
+function toggleAll() {
+  selected = selected.size===customers.length ? new Set() : new Set(customers.map(c=>c["c.id"]));
+  updateSelBtn(); renderTable();
+}
+function updateSelBtn() {
+  document.getElementById("btnSelAll").textContent = selected.size===customers.length&&customers.length>0?"選択解除":"全て選択";
+  document.getElementById("btnCsvSel").disabled = selected.size===0;
+}
+
+function exportAll() {
+  exportCSV(customers, ["顧客ID","顧客名","フリガナ","メール","電話","都道府県","市区町村","反響媒体","ステータス","更新日"],
+    ["c.id","c.name","c.kana","c.mail","c.tel","c.state","c.city","c.baitai","c.status","c.upd_date"], "顧客一覧.csv");
+}
+function exportSelected() {
+  exportCSV(customers.filter(c=>selected.has(c["c.id"])), ["顧客ID","顧客名","フリガナ","メール","電話","都道府県","市区町村","反響媒体","ステータス","更新日"],
+    ["c.id","c.name","c.kana","c.mail","c.tel","c.state","c.city","c.baitai","c.status","c.upd_date"], "顧客一覧_選択.csv");
+}
+
+function openModal(idx) {
+  const c = customers[idx];
+  document.getElementById("modalTitle").textContent = `${c["c.name"]||""} ${c["c.kana"]?"（"+c["c.kana"]+"）":""}`;
+  const addr = [c["c.zip"]&&`〒${c["c.zip"]}`, c["c.state"], c["c.city"], c["c.town"], c["c.address"], c["c.tatemono"]].filter(Boolean).join(" ");
+  const rows = [
+    ["顧客ID", c["c.id"]], ["ステータス", c["c.status"]], ["見込み度", c["c.questionnaire41"]],
+    ["メールアドレス", c["c.mail"]], ["電話番号", c["c.tel"]], ["住所", addr],
+    ["最寄り駅", c["c.moyori"]], ["性別", c["c.sex"]], ["生年月日", c["c.birth"]], ["職業", c["c.work"]],
+    ["反響媒体", c["c.baitai"]], ["反響日", c["c.date_entry"]], ["ご家族人数", c["c.ninzu"]],
+    ["ご予算", c["c.yosan"]], ["自己資金", c["c.jikosikin"]], ["ご希望間取り", c["c.questionnaire23"]],
+    ["ご希望面積", c["c.questionnaire24"]], ["年収（税込）", c["c.questionnaire30"]],
+    ["フック", c["c.questionnaire50"]], ["ネック", c["c.questionnaire49"]],
+    ["検討部屋", c["c.questionnaire52"]], ["状況", c["c.questionnaire51"]],
+    ["登録日時", c["c.ins_date"]], ["更新日時", c["c.upd_date"]],
+  ];
+  document.getElementById("modalBody").innerHTML = rows.filter(([,v])=>v).map(([l,v])=>`<dt>${l}</dt><dd>${v}</dd>`).join("");
+  document.getElementById("modal").style.display = "flex";
+}
+function closeModal() { document.getElementById("modal").style.display = "none"; }
+
+(async () => {
+  if (!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("customer.html");
+  load();
+})();
+</script>
+</body>
+</html>

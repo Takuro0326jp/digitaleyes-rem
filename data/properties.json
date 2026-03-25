@@ -1,0 +1,10 @@
+[
+  {
+    "id": "9cab7509-cefe-4232-bb27-6a83f1d0f2c4",
+    "userId": "1",
+    "name": "ディモア長岡天神 ザ・レジデンス",
+    "databaseId": "nagaoka_customer",
+    "databasePassword": "customer",
+    "tableName": "nagaoka_official"
+  }
+]

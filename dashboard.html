@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1300">
+<title>ダッシュボード | Real Estate Manager by DIGITALEYES</title>
+<link rel="stylesheet" href="common.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+.select-compare-group { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+</style>
+</head>
+<body>
+<div id="wrapper">
+<div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div id="mainContent">
+      <div class="loading-spinner"></div>
+    </div>
+  </main>
+</div>
+</div>
+<script src="common.js"></script>
+<script>
+const STATUSES = ["資料請求・エントリー","来場予約","新規来場","再来場","再々来場1","要望","登録","申込","契約","引渡","検討中止"];
+
+async function loadDashboard() {
+  try {
+    if (!Auth.getActiveProperty()) {
+      document.getElementById("mainContent").innerHTML = `
+        <section class="section" style="padding-top:40px;max-width:560px;margin:0 auto">
+          <div class="error-box" style="border-color:#b2dfdb;background:#f0fff4;color:rgb(70,83,98)">
+            <p style="margin:0 0 12px">物件がまだ登録されていません。データを表示するには設定で物件を追加してください。</p>
+            <a href="settings.html" class="btn btn-primary-solid" style="display:inline-block;text-decoration:none">設定ページへ</a>
+          </div>
+        </section>`;
+      return;
+    }
+    // ステータス別集計
+    const [allData, recentData] = await Promise.all([
+      apiCall({ limit: 1000, fields: JSON.stringify(["c.id","c.status","c.baitai","c.date_entry","c.name","c.kana"]) }),
+      apiCall({ limit: 10, fields: JSON.stringify(["c.id","c.name","c.kana","c.baitai","c.date_entry","c.status"]), order: JSON.stringify(["c.date_entry desc"]) })
+    ]);
+
+    const all = allData.result || [];
+    const recent = recentData.result || [];
+
+    // 集計
+    const counts = {};
+    STATUSES.forEach(s => counts[s] = 0);
+    all.forEach(c => { if (counts[c["c.status"]] !== undefined) counts[c["c.status"]]++; });
+
+    const total = all.length;
+    const visited = (counts["新規来場"]||0) + (counts["再来場"]||0) + (counts["再々来場1"]||0) + (counts["申込"]||0) + (counts["契約"]||0) + (counts["引渡"]||0);
+    const contracted = counts["契約"] || 0;
+    const applied = counts["申込"] || 0;
+    const requested = counts["要望"] || 0;
+
+    // 月別集計（最近6ヶ月）
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(); d.setMonth(d.getMonth() - i);
+      months.push({ label: `${d.getFullYear()}/${d.getMonth()+1}月`, key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` });
+    }
+    const monthCounts = {};
+    months.forEach(m => monthCounts[m.key] = 0);
+    all.forEach(c => {
+      const d = c["c.date_entry"];
+      if (d) {
+        const k = d.slice(0,7);
+        if (monthCounts[k] !== undefined) monthCounts[k]++;
+      }
+    });
+
+    document.getElementById("mainContent").innerHTML = `
+      <!-- 物件概要 -->
+      <section class="section" style="padding-top:20px">
+        <div class="dashboard-top">
+          <div class="dashboard-top__image">
+            <div style="width:273px;height:295px;background:rgba(224,224,224,0.4);display:flex;align-items:center;justify-content:center;color:rgb(150,160,170);font-size:13px">物件画像</div>
+          </div>
+          <div class="dashboard-top__data">
+            <div class="data-header d-flex align-items-center">
+              <h1>${CONFIG.PROPERTY_NAME}</h1>
+              <a href="property.html" class="link-small" style="margin-left:16px">物件概要</a>
+              <div class="ms-auto select-compare-group">
+                <input type="text" class="form-control" value="${getWeekRange()}">
+                <span>〜</span>
+                <input type="text" class="form-control" value="${getWeekEnd()}">
+                <button class="btn">週報作成 ▼</button>
+              </div>
+            </div>
+            <div class="d-flex mb-4">
+              <div>
+                <div class="data-contents d-flex">
+                  <dl><dt>HP 公開日</dt><dd>2024年08月01日（木）</dd></dl>
+                  <dl><dt>経過日数</dt><dd>821日（2年3ヶ月）</dd></dl>
+                </div>
+                <div class="data-contents d-flex">
+                  <dl><dt>総戸数</dt><dd>36戸</dd></dl>
+                  <dl><dt>残戸数</dt><dd>27戸</dd></dl>
+                  <dl><dt>来場開始日</dt><dd>2024年10月26日（土）</dd></dl>
+                  <dl><dt>販売開始日</dt><dd>2024年11月23日（土）</dd></dl>
+                </div>
+              </div>
+            </div>
+            <ul class="card-list">
+              <li>
+                <h5 class="item-title">総反響数</h5>
+                <div class="item-number">${total}<small>件</small></div>
+                <div class="d-flex justify-content-center mt-3">
+                  <div class="item-sub text-nowrap">
+                    <dl><dt>HP反響数</dt><dd>${all.filter(c=>c["c.baitai"]==="公式HP").length}</dd></dl>
+                    <dl><dt>ポータル反響数</dt><dd>${all.filter(c=>c["c.baitai"]&&c["c.baitai"]!=="公式HP").length}</dd></dl>
+                  </div>
+                </div>
+              </li>
+              <li>
+                <h5 class="item-title">総来場数</h5>
+                <div class="item-number">${visited}<small>件</small></div>
+                <div class="d-flex justify-content-center mt-3">
+                  <div class="item-sub text-nowrap">
+                    <dl><dt>来場率</dt><dd>${total > 0 ? (visited/total*100).toFixed(1) : 0}%</dd></dl>
+                  </div>
+                </div>
+              </li>
+              <li>
+                <h5 class="item-title">成約数</h5>
+                <div class="item-number">${contracted}<small>件</small></div>
+                <div class="d-flex justify-content-center mt-3">
+                  <div class="item-sub text-nowrap">
+                    <dl><dt>来場成約率</dt><dd>${visited > 0 ? (contracted/visited*100).toFixed(1) : 0}%</dd></dl>
+                    <dl><dt>反響成約率</dt><dd>${total > 0 ? (contracted/total*100).toFixed(1) : 0}%</dd></dl>
+                  </div>
+                </div>
+              </li>
+              <li>
+                <h5 class="item-title">申込数</h5>
+                <div class="item-number">${applied}<small>件</small></div>
+                <div class="d-flex justify-content-center mt-3">
+                  <div class="item-sub text-nowrap">
+                    <dl><dt>来場申込率</dt><dd>${visited > 0 ? (applied/visited*100).toFixed(1) : 0}%</dd></dl>
+                    <dl><dt>反響申込率</dt><dd>${total > 0 ? (applied/total*100).toFixed(1) : 0}%</dd></dl>
+                  </div>
+                </div>
+              </li>
+              <li>
+                <h5 class="item-title">要望数</h5>
+                <div class="item-number">${requested}<small>件</small></div>
+                <div class="d-flex justify-content-center mt-3">
+                  <div class="item-sub text-nowrap">
+                    <dl><dt>要望獲得率</dt><dd>${total > 0 ? (requested/total*100).toFixed(1) : 0}%</dd></dl>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 反響推移 -->
+      <section class="section">
+        <div class="section-header d-flex align-items-center">
+          <h2 class="section-heading me-3">反響推移</h2>
+          <ul class="nav-tabs">
+            <li><button class="nav-link active">月別</button></li>
+          </ul>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th class="th-left"></th>${months.map(m=>`<th>${m.label}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+              ${STATUSES.map(s => {
+                const mCounts = months.map(m => all.filter(c => c["c.status"]===s && c["c.date_entry"] && c["c.date_entry"].slice(0,7)===m.key).length);
+                return `<tr class="row-main"><td>${s}</td>${mCounts.map(n=>`<td>${n}</td>`).join('')}</tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 新規反響者 -->
+      <section class="section">
+        <div class="section-header"><h2 class="section-heading">新規反響者</h2></div>
+        <table class="customer-table">
+          <tbody>
+            ${recent.map(c => `
+              <tr>
+                <td style="width:100px">${c["c.date_entry"]||""}</td>
+                <td style="font-weight:600">${c["c.name"]||""}</td>
+                <td style="width:100px">${baitaiBadge(c["c.baitai"])}</td>
+                <td>${CONFIG.PROPERTY_NAME}</td>
+                <td style="width:60px"><a href="customer.html">詳細</a></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <a href="customer.html" class="to-list-link">顧客一覧へ →</a>
+      </section>
+
+      <!-- 推移グラフ -->
+      <section class="section">
+        <div class="section-header"><h2 class="section-heading">月別反響推移グラフ</h2></div>
+        <div style="max-width:800px">
+          <canvas id="trendChart" height="120"></canvas>
+        </div>
+      </section>
+
+      <!-- 反響内訳 -->
+      <section class="section">
+        <div class="section-header"><h2 class="section-heading">反響内訳（媒体別）</h2></div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr><th class="th-left">媒体</th>${months.map(m=>`<th>${m.label}</th>`).join('')}<th>合計</th></tr>
+            </thead>
+            <tbody>
+              ${["公式HP","SUUMO","Yahoo!不動産","HOMES","アットホーム"].map(b => {
+                const mCounts = months.map(m => all.filter(c => c["c.baitai"]===b && c["c.date_entry"] && c["c.date_entry"].slice(0,7)===m.key).length);
+                const total = mCounts.reduce((a,b)=>a+b,0);
+                if (total === 0) return '';
+                return `<tr class="row-main"><td>${b}</td>${mCounts.map(n=>`<td>${n||0}</td>`).join('')}<td><strong>${total}</strong></td></tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    `;
+
+    // グラフ描画
+    new Chart(document.getElementById("trendChart"), {
+      type: "bar",
+      data: {
+        labels: months.map(m => m.label),
+        datasets: [{
+          label: "反響数",
+          data: months.map(m => monthCounts[m.key] || 0),
+          backgroundColor: "rgba(53,124,176,0.7)",
+          borderColor: "rgb(53,124,176)",
+          borderWidth: 1
+        }]
+      },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true } } }
+    });
+
+  } catch(e) {
+    document.getElementById("mainContent").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`;
+  }
+}
+
+function getWeekRange() {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+  const mon = new Date(d.setDate(diff));
+  return `${mon.getFullYear()}/${mon.getMonth()+1}/${mon.getDate()}`;
+}
+function getWeekEnd() {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = d.getDate() - day + 7;
+  const sun = new Date(d.setDate(diff));
+  return `${sun.getFullYear()}/${sun.getMonth()+1}/${sun.getDate()}`;
+}
+
+(async () => {
+  if (!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("dashboard.html");
+  loadDashboard();
+})();
+</script>
+</body>
+</html>

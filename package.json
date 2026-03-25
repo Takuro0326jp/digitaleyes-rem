@@ -1,0 +1,8 @@
+{
+  "name": "digitaleyes-rem",
+  "private": true,
+  "scripts": {
+    "dev": "node proxy-server.js",
+    "vercel-build": "echo 'static + api'"
+  }
+}

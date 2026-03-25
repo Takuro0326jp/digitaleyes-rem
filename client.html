@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1300">
+<title>クライアント一覧 | Real Estate Manager by DIGITALEYES</title>
+<link rel="stylesheet" href="common.css">
+</head>
+<body>
+<div id="wrapper">
+<div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="page-title-bar">
+      <h1>クライアント一覧</h1>
+      <span id="totalLabel" style="font-size:13px;color:rgb(120,130,140)"></span>
+    </div>
+
+    <div class="filter-bar">
+      <div class="filter-item">
+        <label>キーワード（担当者名）</label>
+        <input type="text" id="fTantousha" placeholder="担当者名で検索" onkeydown="if(event.key==='Enter')search()">
+      </div>
+      <div class="filter-item">
+        <label>担当会社</label>
+        <select id="fCompany"><option value="">すべて</option><option>ワールドエステート</option><option>シアーズ</option></select>
+      </div>
+      <div>
+        <button class="btn btn-primary-solid" onclick="search()">検索</button>
+        <button class="btn" onclick="clearFilters()" style="margin-left:4px">クリア</button>
+      </div>
+    </div>
+
+    <div id="tableArea"></div>
+    <div class="pagination" id="pagination"></div>
+  </main>
+</div>
+</div>
+<script src="common.js"></script>
+<script>
+const LIMIT = 20;
+let customers = [], totalCount = 0, currentPage = 1;
+
+function search() { currentPage = 1; load(); }
+function clearFilters() {
+  document.getElementById("fTantousha").value = "";
+  document.getElementById("fCompany").value = "";
+  search();
+}
+
+async function load() {
+  document.getElementById("tableArea").innerHTML = '<div class="loading-spinner"></div>';
+  try {
+    const tantousha = document.getElementById("fTantousha").value;
+    const company = document.getElementById("fCompany").value;
+    const cond = {};
+    if (tantousha) cond["c.tantousha like"] = `%${tantousha}%`;
+    if (company) cond["c.questionnaire45"] = company;
+
+    const params = {
+      limit: LIMIT, page: currentPage,
+      order: JSON.stringify(["c.upd_date desc"]),
+      fields: JSON.stringify(["c.id","c.name","c.kana","c.status","c.tantousha","c.questionnaire45","c.date_entry","c.date_visit","c.date_contract","c.baitai","c.mail","c.tel","c.upd_date"])
+    };
+    if (Object.keys(cond).length) params.conditions = JSON.stringify([cond]);
+
+    const data = await apiCall(params);
+    customers = data.result || [];
+    totalCount = parseTotalCount(data);
+    document.getElementById("totalLabel").textContent = `総件数: ${totalCount.toLocaleString()}件`;
+    renderTable(); renderPagination();
+  } catch(e) {
+    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`;
+  }
+}
+
+function renderTable() {
+  if (!customers.length) { document.getElementById("tableArea").innerHTML = '<div class="empty-msg">データが見つかりませんでした</div>'; return; }
+  let html = `<div class="table-scroll"><table class="list-table">
+    <thead><tr>
+      <th>顧客ID</th><th>顧客名</th><th>ステータス</th><th>担当者</th><th>担当会社</th>
+      <th>反響媒体</th><th>反響日</th><th>来場日</th><th>契約日</th><th>電話番号</th><th>更新日</th>
+    </tr></thead><tbody>`;
+  customers.forEach(c => {
+    html += `<tr>
+      <td style="color:rgb(120,130,140)">${c["c.id"]||""}</td>
+      <td style="font-weight:600">${c["c.name"]||""}<br><span style="font-size:11px;color:rgb(150,160,170)">${c["c.kana"]||""}</span></td>
+      <td>${statusBadge(c["c.status"])}</td>
+      <td>${c["c.tantousha"]||""}</td>
+      <td>${c["c.questionnaire45"]||""}</td>
+      <td>${baitaiBadge(c["c.baitai"])}</td>
+      <td style="white-space:nowrap">${c["c.date_entry"]||""}</td>
+      <td style="white-space:nowrap">${c["c.date_visit"]||""}</td>
+      <td style="white-space:nowrap">${c["c.date_contract"]||""}</td>
+      <td>${c["c.tel"]||""}</td>
+      <td style="white-space:nowrap;color:rgb(150,160,170)">${c["c.upd_date"]?c["c.upd_date"].slice(0,10):""}</td>
+    </tr>`;
+  });
+  html += "</tbody></table></div>";
+  document.getElementById("tableArea").innerHTML = html;
+}
+
+function renderPagination() {
+  const total = Math.ceil(totalCount / LIMIT);
+  if (total <= 1) return;
+  const start = Math.max(1, currentPage-4), end = Math.min(total, start+8);
+  let html = `<button onclick="goPage(${currentPage-1})" ${currentPage===1?"disabled":""}>＜</button>`;
+  for (let i = start; i <= end; i++) html += `<button class="${i===currentPage?"active":""}" onclick="goPage(${i})">${i}</button>`;
+  html += `<button onclick="goPage(${currentPage+1})" ${currentPage===total?"disabled":""}>＞</button>`;
+  document.getElementById("pagination").innerHTML = html;
+}
+
+function goPage(p) {
+  const t = Math.ceil(totalCount/LIMIT);
+  if (p<1||p>t) return;
+  currentPage = p; load(); window.scrollTo(0,0);
+}
+
+(async () => {
+  if (!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("client.html");
+  load();
+})();
+</script>
+</body>
+</html>

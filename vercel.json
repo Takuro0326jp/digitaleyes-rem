@@ -1,0 +1,14 @@
+{
+  "cleanUrls": true,
+  "functions": {
+    "api/handler.js": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/", "destination": "/login.html" },
+    { "source": "/auth/:path*", "destination": "/api/handler?__r=/auth/:path*" },
+    { "source": "/user/:path*", "destination": "/api/handler?__r=/user/:path*" },
+    { "source": "/api/v1/:path*", "destination": "/api/handler?__r=/api/v1/:path*" }
+  ]
+}

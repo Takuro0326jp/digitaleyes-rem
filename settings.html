@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1300">
+<title>設定 | Real Estate Manager by DIGITALEYES</title>
+<link rel="stylesheet" href="common.css">
+<style>
+.settings-section { max-width: 700px; margin-bottom: 40px; }
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; font-size: 12px; font-weight: 600; color: rgb(70,83,98); margin-bottom: 6px; }
+.form-group input { width: 100%; padding: 8px 10px; border: 1px solid #ced4da; font-size: 14px; font-family: inherit; color: rgb(70,83,98); }
+.form-group input:focus { outline: none; border-color: rgb(53,124,176); }
+.form-group .hint { font-size: 11px; color: rgb(150,160,170); margin-top: 4px; }
+.prop-card { border: 1px solid rgb(224,224,224); padding: 16px 20px; margin-bottom: 10px; display: flex; align-items: center; gap: 16px; }
+.prop-card.active-prop { border-color: rgb(53,124,176); background: rgba(53,124,176,0.03); }
+.prop-name { font-weight: 700; font-size: 14px; flex: 1; }
+.prop-meta { font-size: 12px; color: rgb(120,130,140); }
+.badge-active { background: rgb(53,124,176); color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 2px; }
+.success-msg { color: rgb(0,130,60); font-size: 13px; padding: 8px 12px; background: #f0fff4; border: 1px solid #b2dfdb; display: none; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.modal-box { background: #fff; width: 500px; box-shadow: 0 8px 40px rgba(0,0,0,0.2); }
+.modal-header { background: rgb(70,83,98); padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; }
+.modal-header h3 { color: #fff; font-size: 15px; font-weight: 600; }
+.modal-close { background: none; border: none; color: #fff; font-size: 20px; cursor: pointer; }
+.modal-body { padding: 24px; }
+.modal-footer { padding: 12px 24px; border-top: 1px solid rgb(224,224,224); display: flex; justify-content: flex-end; gap: 8px; }
+</style>
+</head>
+<body>
+<div id="wrapper">
+<div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="page-title-bar"><h1>設定</h1></div>
+
+    <!-- 物件管理 -->
+    <div class="settings-section">
+      <div class="section-header">
+        <h2 class="section-heading">物件管理</h2>
+        <button class="btn btn-primary-solid btn-sm" onclick="openAddModal()" style="margin-left:auto">＋ 物件を追加</button>
+      </div>
+      <div id="propList"><div class="loading-spinner"></div></div>
+    </div>
+
+    <!-- パスワード変更 -->
+    <div class="settings-section">
+      <div class="section-header"><h2 class="section-heading">パスワード変更</h2></div>
+      <div class="form-group">
+        <label>現在のパスワード</label>
+        <input type="password" id="currentPassword">
+      </div>
+      <div class="form-group">
+        <label>新しいパスワード</label>
+        <input type="password" id="newPassword">
+      </div>
+      <div class="form-group">
+        <label>新しいパスワード（確認）</label>
+        <input type="password" id="confirmPassword">
+      </div>
+      <div id="pwMsg" class="error-box" style="display:none"></div>
+      <div id="pwSuccess" class="success-msg">パスワードを変更しました</div>
+      <button class="btn btn-primary-solid" onclick="changePassword()">パスワードを変更</button>
+    </div>
+
+  </main>
+</div>
+</div>
+
+<!-- 物件追加・編集モーダル -->
+<div class="modal-overlay" id="propModal" style="display:none">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3 id="modalTitle">物件を追加</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editPropId">
+      <div class="form-group">
+        <label>物件名 <span style="color:#cc0000">*</span></label>
+        <input type="text" id="propName" placeholder="例：グレーシアライフ横浜ゆめが丘">
+      </div>
+      <div class="form-group">
+        <label>データベースID <span style="color:#cc0000">*</span></label>
+        <input type="text" id="propDbId" placeholder="例：nagaoka_customer">
+        <div class="hint">デジタライズ管理画面の「データベースID」</div>
+      </div>
+      <div class="form-group">
+        <label>データベースパスワード</label>
+        <input type="password" id="propDbPass" placeholder="例：customer">
+        <div class="hint">デジタライズ管理画面の「Password」</div>
+      </div>
+      <div class="form-group">
+        <label>テーブル名 <span style="color:#cc0000">*</span></label>
+        <input type="text" id="propTable" placeholder="例：nagaoka_official">
+        <div class="hint">デジタライズ管理画面の「公式HPテーブル名称」</div>
+      </div>
+      <div id="modalErr" class="error-box" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal()">キャンセル</button>
+      <button class="btn btn-primary-solid" onclick="saveProp()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+(async () => {
+  if (!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("settings.html");
+  renderProps();
+})();
+
+function renderProps() {
+  const props = Auth.getProperties();
+  const active = Auth.getActiveProperty();
+  if (!props.length) {
+    document.getElementById("propList").innerHTML = `<div class="empty-msg" style="padding:30px;text-align:left;color:rgb(150,160,170)">物件が登録されていません。「＋ 物件を追加」から追加してください。</div>`;
+    return;
+  }
+  document.getElementById("propList").innerHTML = props.map(p => `
+    <div class="prop-card ${p.id === active?.id ? 'active-prop' : ''}">
+      <div>
+        <div class="prop-name">${p.name} ${p.id === active?.id ? '<span class="badge-active">選択中</span>' : ''}</div>
+        <div class="prop-meta">DB: ${p.databaseId} ／ テーブル: ${p.tableName}</div>
+      </div>
+      ${p.id !== active?.id ? `<button class="btn btn-sm" onclick="selectProp('${p.id}')">選択</button>` : ''}
+      <button class="btn btn-sm" onclick="openEditModal('${p.id}')">編集</button>
+      <button class="btn btn-sm" onclick="deleteProp('${p.id}', '${p.name}')" style="color:#cc0000;border-color:#cc0000">削除</button>
+    </div>
+  `).join("");
+}
+
+async function selectProp(id) {
+  await selectProperty(id);
+  await requireAuth();
+  renderProps();
+}
+
+function openAddModal() {
+  document.getElementById("modalTitle").textContent = "物件を追加";
+  document.getElementById("editPropId").value = "";
+  document.getElementById("propName").value = "";
+  document.getElementById("propDbId").value = "";
+  document.getElementById("propDbPass").value = "";
+  document.getElementById("propTable").value = "";
+  document.getElementById("modalErr").style.display = "none";
+  document.getElementById("propModal").style.display = "flex";
+}
+
+function openEditModal(id) {
+  const prop = Auth.getProperties().find(p => p.id === id);
+  if (!prop) return;
+  document.getElementById("modalTitle").textContent = "物件を編集";
+  document.getElementById("editPropId").value = id;
+  document.getElementById("propName").value = prop.name;
+  document.getElementById("propDbId").value = prop.databaseId;
+  document.getElementById("propDbPass").value = prop.databasePassword || "";
+  document.getElementById("propTable").value = prop.tableName;
+  document.getElementById("modalErr").style.display = "none";
+  document.getElementById("propModal").style.display = "flex";
+}
+
+function closeModal() { document.getElementById("propModal").style.display = "none"; }
+
+async function saveProp() {
+  const id = document.getElementById("editPropId").value;
+  const body = {
+    name: document.getElementById("propName").value.trim(),
+    databaseId: document.getElementById("propDbId").value.trim(),
+    databasePassword: document.getElementById("propDbPass").value,
+    tableName: document.getElementById("propTable").value.trim(),
+  };
+  if (!body.name || !body.databaseId || !body.tableName) {
+    document.getElementById("modalErr").textContent = "物件名・データベースID・テーブル名は必須です";
+    document.getElementById("modalErr").style.display = "block"; return;
+  }
+  const url = id ? `${CONFIG.API_BASE}/user/properties/${id}` : `${CONFIG.API_BASE}/user/properties`;
+  const method = id ? "PUT" : "POST";
+  const res = await fetch(url, {
+    method, headers: { "Authorization": `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!data.ok) { document.getElementById("modalErr").textContent = data.message; document.getElementById("modalErr").style.display = "block"; return; }
+  closeModal();
+  await requireAuth();
+  renderProps();
+}
+
+async function deleteProp(id, name) {
+  if (!confirm(`「${name}」を削除しますか？`)) return;
+  await fetch(`${CONFIG.API_BASE}/user/properties/${id}`, {
+    method: "DELETE", headers: { "Authorization": `Bearer ${Auth.getToken()}` }
+  });
+  await requireAuth();
+  renderProps();
+}
+
+async function changePassword() {
+  const current = document.getElementById("currentPassword").value;
+  const newPw = document.getElementById("newPassword").value;
+  const confirm = document.getElementById("confirmPassword").value;
+  const errEl = document.getElementById("pwMsg");
+  errEl.style.display = "none";
+  if (newPw !== confirm) { errEl.textContent = "新しいパスワードが一致しません"; errEl.style.display = "block"; return; }
+  if (newPw.length < 4) { errEl.textContent = "パスワードは4文字以上にしてください"; errEl.style.display = "block"; return; }
+  const res = await fetch(`${CONFIG.API_BASE}/user/change-password`, {
+    method: "POST", headers: { "Authorization": `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword: current, newPassword: newPw })
+  });
+  const data = await res.json();
+  if (!data.ok) { errEl.textContent = data.message; errEl.style.display = "block"; return; }
+  document.getElementById("pwSuccess").style.display = "block";
+  document.getElementById("currentPassword").value = "";
+  document.getElementById("newPassword").value = "";
+  document.getElementById("confirmPassword").value = "";
+  setTimeout(() => document.getElementById("pwSuccess").style.display = "none", 3000);
+}
+</script>
+</body>
+</html>
