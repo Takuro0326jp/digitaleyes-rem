@@ -1,5 +1,18 @@
 {
+  "cleanUrls": true,
   "redirects": [
     { "source": "/", "destination": "/login" }
+  ],
+  "functions": {
+    "api/handler.js": {
+      "maxDuration": 120
+    }
+  },
+  "rewrites": [
+    { "source": "/auth/:path*", "destination": "/api/handler?__r=/auth/:path*" },
+    { "source": "/user/:path*", "destination": "/api/handler?__r=/user/:path*" },
+    { "source": "/local/:path*", "destination": "/api/handler?__r=/local/:path*" },
+    { "source": "/sync/:path*", "destination": "/api/handler?__r=/sync/:path*" },
+    { "source": "/api/v1/:path*", "destination": "/api/handler?__r=/api/v1/:path*" }
   ]
 }
