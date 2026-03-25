@@ -14,10 +14,13 @@
     <div class="page-title-bar">
       <h1>顧客一覧</h1>
       <span id="totalLabel" style="font-size:13px;color:rgb(120,130,140)">読み込み中...</span>
+      <span id="cacheStatus" style="font-size:12px;color:rgb(53,124,176);margin-left:12px"></span>
     </div>
 
     <!-- アクションボタン -->
     <div class="action-row">
+      <button class="btn btn-primary-solid btn-sm" id="btnSyncInc" onclick="runSync('incremental')">差分同期</button>
+      <button class="btn btn-sm" id="btnSyncFull" onclick="runSync('full')">全件同期</button>
       <button class="btn btn-primary-solid" onclick="void 0">分析表</button>
       <button class="btn" onclick="exportAll()">CSVダウンロード（全データ）</button>
       <button class="btn" id="btnCsvSel" onclick="exportSelected()" disabled>CSVダウンロード（選択したデータ）</button>
@@ -79,6 +82,13 @@
     </div>
     <div class="modal-body">
       <dl class="detail-grid" id="modalBody"></dl>
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgb(224,224,224)">
+        <label style="display:block;font-size:12px;font-weight:600;color:rgb(70,83,98);margin-bottom:6px">来場ステータス（キャッシュのみ・デジタライズには未反映）</label>
+        <div class="d-flex align-items-center flex-wrap" style="gap:8px">
+          <select id="modalEditStatus" style="min-width:220px;padding:8px 10px;border:1px solid #ced4da;font-size:14px;font-family:inherit"></select>
+          <button type="button" class="btn btn-primary-solid btn-sm" onclick="saveModalStatus()">ステータスを保存</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -87,16 +97,75 @@
 <script>
 const LIMIT = 20;
 const PREFS = ["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"];
-const STATUSES = ["資料請求・エントリー","来場予約","新規来場","再来場","再々来場1","要望","登録","申込","契約","引渡","検討中止"];
 const YOSAN = ["～3000万円","～3500万円","～4000万円","～4500万円","～5000万円","～5500万円","～6000万円","～6500万円","～7000万円","～7500万円","～8000万円"];
 const JIKOSIKIN = ["〜100万円","〜200万円","〜300万円","〜400万円","〜500万円","〜600万円","〜700万円","〜800万円","〜900万円","〜1000万円","〜1200万円","〜1500万円","〜2000万円"];
-const FIELDS = ["c.id","c.name","c.kana","c.mail","c.tel","c.state","c.city","c.town","c.address","c.tatemono","c.baitai","c.upd_date","c.status","c.sex","c.birth","c.ninzu","c.yosan","c.jikosikin","c.questionnaire23","c.questionnaire24","c.questionnaire30","c.questionnaire41","c.date_entry","c.ins_date","c.moyori","c.work","c.zip","c.questionnaire50","c.questionnaire49","c.questionnaire51","c.questionnaire52"];
 
 let customers = [], totalCount = 0, currentPage = 1, selected = new Set(), showDetail = false;
+let VISIT_STATUSES = [];
+let modalCustomerIdx = null;
 
-// セレクト初期化
+// セレクト初期化（ステータスは loadVisitStatuses で物件別に取得）
 const addOpts = (id, arr) => { const el = document.getElementById(id); arr.forEach(v => el.innerHTML += `<option>${v}</option>`); };
-addOpts("fState", PREFS); addOpts("fStatus", STATUSES); addOpts("fYosan", YOSAN); addOpts("fJikosikin", JIKOSIKIN);
+addOpts("fState", PREFS); addOpts("fYosan", YOSAN); addOpts("fJikosikin", JIKOSIKIN);
+
+async function loadVisitStatuses() {
+  document.getElementById("fStatus").innerHTML = '<option value="">すべて</option>';
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/local/visit-statuses`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    const d = await res.json();
+    VISIT_STATUSES = (d.ok && Array.isArray(d.statuses)) ? d.statuses : [];
+  } catch (_) {
+    VISIT_STATUSES = [];
+  }
+  const el = document.getElementById("fStatus");
+  VISIT_STATUSES.forEach((s) => {
+    const o = document.createElement("option");
+    o.value = s;
+    o.textContent = s;
+    el.appendChild(o);
+  });
+}
+
+function fillModalStatusSelect(currentVal) {
+  const sel = document.getElementById("modalEditStatus");
+  sel.innerHTML = "";
+  const o0 = document.createElement("option");
+  o0.value = "";
+  o0.textContent = "（未設定）";
+  sel.appendChild(o0);
+  VISIT_STATUSES.forEach((s) => {
+    const o = document.createElement("option");
+    o.value = s;
+    o.textContent = s;
+    if (s === currentVal) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+async function saveModalStatus() {
+  if (modalCustomerIdx == null) return;
+  const c = customers[modalCustomerIdx];
+  const id = c["c.id"];
+  const v = document.getElementById("modalEditStatus").value;
+  const res = await fetch(`${CONFIG.API_BASE}/local/customers/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${Auth.getToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ "c.status": v || null }),
+  });
+  const d = await res.json();
+  if (!res.ok) {
+    alert(d.message || "保存に失敗しました");
+    return;
+  }
+  customers[modalCustomerIdx] = d.customer;
+  closeModal();
+  renderTable();
+}
 
 function getFilters() {
   return {
@@ -131,27 +200,77 @@ async function load() {
 
   try {
     const f = getFilters();
-    const cond = {};
-    if (f.keyword) cond["c.name like"] = `%${f.keyword}%`;
-    if (f.state) cond["c.state"] = f.state;
-    if (f.baitai) cond["c.baitai"] = f.baitai;
-    if (f.status) cond["c.status"] = f.status;
-    if (f.ninzu) cond["c.ninzu"] = f.ninzu;
-    if (f.yosan) cond["c.yosan"] = f.yosan;
-    if (f.jikosikin) cond["c.jikosikin"] = f.jikosikin;
-    if (f.madori) cond["c.questionnaire23"] = f.madori;
-    if (f.menseki) cond["c.questionnaire24"] = f.menseki;
+    const qs = new URLSearchParams({ page: String(currentPage), limit: String(LIMIT) });
+    if (f.keyword) qs.set("keyword", f.keyword);
+    if (f.state) qs.set("state", f.state);
+    if (f.baitai) qs.set("baitai", f.baitai);
+    if (f.status) qs.set("status", f.status);
+    if (f.ninzu) qs.set("ninzu", f.ninzu);
+    if (f.yosan) qs.set("yosan", f.yosan);
+    if (f.jikosikin) qs.set("jikosikin", f.jikosikin);
+    if (f.madori) qs.set("madori", f.madori);
+    if (f.menseki) qs.set("menseki", f.menseki);
 
-    const params = { limit: LIMIT, page: currentPage, order: JSON.stringify(["c.upd_date desc"]), fields: JSON.stringify(FIELDS) };
-    if (Object.keys(cond).length) params.conditions = JSON.stringify([cond]);
-
-    const data = await apiCall(params);
+    const res = await fetch(`${CONFIG.API_BASE}/local/customers?${qs}`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    const pack = await res.json();
+    if (!pack.ok) throw new Error(pack.message || "ローカルDBの取得に失敗しました");
+    const data = pack.data;
     customers = data.result || [];
     totalCount = parseTotalCount(data);
-    document.getElementById("totalLabel").textContent = `総件数: ${totalCount.toLocaleString()}件`;
+    document.getElementById("totalLabel").textContent = `総件数: ${totalCount.toLocaleString()}件（ローカルDB・デジタライズへの通信なし）`;
     renderTable(); renderPagination();
+    refreshCacheStatus();
   } catch(e) {
-    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`;
+    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}<br><small>初回は「全件同期」でデータを取り込んでください。</small></div>`;
+  }
+}
+
+async function refreshCacheStatus() {
+  const el = document.getElementById("cacheStatus");
+  if (!el) return;
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/local/sync-status`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    const s = await res.json();
+    if (!s.ok) return;
+    if (!s.hasData && !s.rows_total) {
+      el.textContent = "キャッシュ未構築 → 同期が必要です";
+      return;
+    }
+    const t = (s.last_incremental_at || s.last_full_at || "").replace("T", " ").slice(0, 16);
+    el.textContent = `キャッシュ ${(s.rows_total ?? 0).toLocaleString()}件${t ? " · 最終同期 " + t : ""}`;
+  } catch (_) {
+    el.textContent = "";
+  }
+}
+
+async function runSync(mode) {
+  const b1 = document.getElementById("btnSyncInc");
+  const b2 = document.getElementById("btnSyncFull");
+  if (b1) b1.disabled = true;
+  if (b2) b2.disabled = true;
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/sync/customers`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Auth.getToken()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mode }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.message || "同期に失敗しました");
+    if (d.ok === false) throw new Error(d.message || "同期に失敗しました");
+    alert(d.message || `${mode === "full" ? "全件" : "差分"}同期: ${d.fetched ?? 0}件取得`);
+    await load();
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    if (b1) b1.disabled = false;
+    if (b2) b2.disabled = false;
   }
 }
 
@@ -221,8 +340,10 @@ function exportSelected() {
 }
 
 function openModal(idx) {
+  modalCustomerIdx = idx;
   const c = customers[idx];
   document.getElementById("modalTitle").textContent = `${c["c.name"]||""} ${c["c.kana"]?"（"+c["c.kana"]+"）":""}`;
+  fillModalStatusSelect(c["c.status"] || "");
   const addr = [c["c.zip"]&&`〒${c["c.zip"]}`, c["c.state"], c["c.city"], c["c.town"], c["c.address"], c["c.tatemono"]].filter(Boolean).join(" ");
   const rows = [
     ["顧客ID", c["c.id"]], ["ステータス", c["c.status"]], ["見込み度", c["c.questionnaire41"]],
@@ -238,11 +359,15 @@ function openModal(idx) {
   document.getElementById("modalBody").innerHTML = rows.filter(([,v])=>v).map(([l,v])=>`<dt>${l}</dt><dd>${v}</dd>`).join("");
   document.getElementById("modal").style.display = "flex";
 }
-function closeModal() { document.getElementById("modal").style.display = "none"; }
+function closeModal() {
+  document.getElementById("modal").style.display = "none";
+  modalCustomerIdx = null;
+}
 
 (async () => {
   if (!await requireAuth()) return;
   document.getElementById("header").innerHTML = renderHeader("customer.html");
+  await loadVisitStatuses();
   load();
 })();
 </script>

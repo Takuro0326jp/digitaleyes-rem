@@ -6,6 +6,15 @@ const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const {
+  runCustomerSync,
+  queryLocalCustomers,
+  getSyncStatus,
+  getVisitStatuses,
+  saveVisitStatuses,
+  patchLocalCustomer,
+  DEFAULT_VISIT_STATUSES,
+} = require("../lib/sync-service");
 
 const API_HOST = "api.digital-eyes.jp";
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -139,29 +148,30 @@ function persistOrFail(res, fn) {
 }
 
 module.exports = async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  try {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-  if (req.method === "OPTIONS") {
-    res.statusCode = 204;
-    res.end();
-    return;
-  }
+    if (req.method === "OPTIONS") {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
 
-  const host = req.headers.host || "localhost";
-  const url = new URL(req.url || "/", `http://${host}`);
-  let routePath = url.searchParams.get("__r");
-  if (Array.isArray(routePath)) routePath = routePath[0];
-  if (!routePath || typeof routePath !== "string") {
-    json(res, 400, { ok: false, message: "Invalid route" });
-    return;
-  }
-  if (!routePath.startsWith("/")) routePath = "/" + routePath;
+    const host = req.headers.host || "localhost";
+    const url = new URL(req.url || "/", `http://${host}`);
+    let routePath = url.searchParams.get("__r");
+    if (Array.isArray(routePath)) routePath = routePath[0];
+    if (!routePath || typeof routePath !== "string") {
+      json(res, 400, { ok: false, message: "Invalid route" });
+      return;
+    }
+    if (!routePath.startsWith("/")) routePath = "/" + routePath;
 
-  const env = ENV();
-  const secretId = env.SECRET_ID || "";
-  const secretPassword = env.SECRET_PASSWORD || "";
+    const env = ENV();
+    const secretId = env.SECRET_ID || "";
+    const secretPassword = env.SECRET_PASSWORD || "";
 
   // ── POST /auth/login ──
   if (routePath === "/auth/login" && req.method === "POST") {
@@ -342,12 +352,161 @@ module.exports = async (req, res) => {
     return;
   }
 
+  // ── POST /sync/customers ──
+  if (routePath === "/sync/customers" && req.method === "POST") {
+    const users = readJSON("users.json");
+    const user = users.find((u) => u.id === session.userId);
+    const props = readJSON("properties.json");
+    const prop = props.find(
+      (p) => p.id === user?.activePropertyId && p.userId === session.userId
+    );
+    if (!prop) {
+      json(res, 400, { ok: false, message: "物件が選択されていません。" });
+      return;
+    }
+    try {
+      const body = await readJsonBody(req);
+      const mode = body.mode === "full" ? "full" : "incremental";
+      const result = await runCustomerSync(prop, env, mode);
+      json(res, 200, result);
+    } catch (e) {
+      console.error(e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  // ── GET /local/customers ──
+  if (routePath === "/local/customers" && req.method === "GET") {
+    const users = readJSON("users.json");
+    const user = users.find((u) => u.id === session.userId);
+    const props = readJSON("properties.json");
+    const prop = props.find(
+      (p) => p.id === user?.activePropertyId && p.userId === session.userId
+    );
+    if (!prop) {
+      json(res, 400, { ok: false, message: "物件が選択されていません。" });
+      return;
+    }
+    try {
+      const fullUrl = new URL(req.url || "/", `http://${host}`);
+      const qp = {};
+      fullUrl.searchParams.forEach((v, k) => {
+        if (k === "__r") return;
+        qp[k] = v;
+      });
+      const pack = await queryLocalCustomers(prop.id, qp);
+      json(res, 200, { ok: true, data: pack.data });
+    } catch (e) {
+      console.error(e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  // ── GET /local/sync-status ──
+  if (routePath === "/local/sync-status" && req.method === "GET") {
+    const users = readJSON("users.json");
+    const user = users.find((u) => u.id === session.userId);
+    const props = readJSON("properties.json");
+    const prop = props.find(
+      (p) => p.id === user?.activePropertyId && p.userId === session.userId
+    );
+    if (!prop) {
+      json(res, 200, { ok: true, hasData: false, rows_total: 0 });
+      return;
+    }
+    try {
+      const st = await getSyncStatus(prop.id);
+      json(res, 200, { ok: true, ...st });
+    } catch (e) {
+      console.error(e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  // ── GET/PUT /local/visit-statuses ──
+  if (routePath === "/local/visit-statuses" && req.method === "GET") {
+    const users = readJSON("users.json");
+    const user = users.find((u) => u.id === session.userId);
+    const props = readJSON("properties.json");
+    const prop = props.find(
+      (p) => p.id === user?.activePropertyId && p.userId === session.userId
+    );
+    if (!prop) {
+      json(res, 200, { ok: true, statuses: DEFAULT_VISIT_STATUSES });
+      return;
+    }
+    try {
+      const arr = await getVisitStatuses(prop.id);
+      json(res, 200, { ok: true, statuses: arr });
+    } catch (e) {
+      console.error(e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+  if (routePath === "/local/visit-statuses" && req.method === "PUT") {
+    const users = readJSON("users.json");
+    const user = users.find((u) => u.id === session.userId);
+    const props = readJSON("properties.json");
+    const prop = props.find(
+      (p) => p.id === user?.activePropertyId && p.userId === session.userId
+    );
+    if (!prop) {
+      json(res, 400, { ok: false, message: "物件が選択されていません。" });
+      return;
+    }
+    try {
+      const body = await readJsonBody(req);
+      const saved = await saveVisitStatuses(prop.id, body.statuses);
+      json(res, 200, { ok: true, statuses: saved });
+    } catch (e) {
+      console.error(e);
+      json(res, 400, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  // ── PATCH /local/customers/:id ──
+  if (routePath.startsWith("/local/customers/") && req.method === "PATCH") {
+    const users = readJSON("users.json");
+    const user = users.find((u) => u.id === session.userId);
+    const props = readJSON("properties.json");
+    const prop = props.find(
+      (p) => p.id === user?.activePropertyId && p.userId === session.userId
+    );
+    if (!prop) {
+      json(res, 400, { ok: false, message: "物件が選択されていません。" });
+      return;
+    }
+    try {
+      const customerId = decodeURIComponent(
+        routePath.slice("/local/customers/".length)
+      );
+      if (!customerId) {
+        json(res, 400, { ok: false, message: "顧客IDが不正です" });
+        return;
+      }
+      const body = await readJsonBody(req);
+      const result = await patchLocalCustomer(prop.id, customerId, body);
+      json(res, 200, result);
+    } catch (e) {
+      console.error(e);
+      json(res, 400, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
   // ── POST /api/v1/... → デジタライズ API ──
   if (routePath.startsWith("/api/") && req.method === "POST") {
     const users = readJSON("users.json");
     const user = users.find((u) => u.id === session.userId);
     const props = readJSON("properties.json");
-    const prop = props.find((p) => p.id === user?.activePropertyId);
+    const prop = props.find(
+      (p) => p.id === user?.activePropertyId && p.userId === session.userId
+    );
     if (!prop) {
       json(res, 400, {
         ok: false,
@@ -395,5 +554,15 @@ module.exports = async (req, res) => {
     return;
   }
 
-  json(res, 404, { ok: false, message: "Not found" });
+    json(res, 404, { ok: false, message: "Not found" });
+  } catch (e) {
+    console.error("[api/handler] Unhandled error", e && (e.stack || e));
+    // ここで落ちると Vercel 側が汎用 500 しか返さないので、JSONで返す
+    try {
+      json(res, 500, { ok: false, message: e?.message || String(e) });
+    } catch (_) {
+      res.statusCode = 500;
+      res.end("Internal Server Error");
+    }
+  }
 };

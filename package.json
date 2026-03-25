@@ -4,5 +4,8 @@
   "scripts": {
     "dev": "node proxy-server.js",
     "vercel-build": "echo 'static + api'"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.2"
   }
 }

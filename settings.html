@@ -43,6 +43,20 @@
       <div id="propList"><div class="loading-spinner"></div></div>
     </div>
 
+    <!-- 来場ステータス（アクティブ物件＝案件ごと） -->
+    <div class="settings-section">
+      <div class="section-header"><h2 class="section-heading">来場ステータス</h2></div>
+      <p class="hint" style="margin-bottom:12px;line-height:1.55;max-width:700px">
+        顧客一覧の「ステータス」候補とモーダルでの編集用です。<strong>現在選択中の物件</strong>ごとにキャッシュDB（LibSQL）へ保存されます。デジタライズ本番DBには書き込みません。同期で顧客データは更新されますが、ここで変えたステータスは <code>local_overrides</code> として保持されます。
+      </p>
+      <div class="form-group">
+        <label>ステータス名（1行に1つ・最大60件）</label>
+        <textarea id="visitStatusesText" rows="14" style="width:100%;max-width:700px;font-family:inherit;font-size:13px;padding:8px;border:1px solid #ced4da"></textarea>
+      </div>
+      <div id="visitStatusMsg" class="error-box" style="display:none"></div>
+      <button class="btn btn-primary-solid" onclick="saveVisitStatuses()">ステータス一覧を保存</button>
+    </div>
+
     <!-- パスワード変更 -->
     <div class="settings-section">
       <div class="section-header"><h2 class="section-heading">パスワード変更</h2></div>
@@ -110,7 +124,43 @@
   if (!await requireAuth()) return;
   document.getElementById("header").innerHTML = renderHeader("settings.html");
   renderProps();
+  await loadVisitStatusesEditor();
 })();
+
+async function loadVisitStatusesEditor() {
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/local/visit-statuses`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    const d = await res.json();
+    if (d.ok && Array.isArray(d.statuses)) {
+      document.getElementById("visitStatusesText").value = d.statuses.join("\n");
+    }
+  } catch (_) {}
+}
+
+async function saveVisitStatuses() {
+  const ta = document.getElementById("visitStatusesText");
+  const msg = document.getElementById("visitStatusMsg");
+  msg.style.display = "none";
+  const statuses = ta.value.split("\n").map((s) => s.trim()).filter(Boolean);
+  const res = await fetch(`${CONFIG.API_BASE}/local/visit-statuses`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${Auth.getToken()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ statuses }),
+  });
+  const d = await res.json();
+  if (!d.ok) {
+    msg.textContent = d.message || "保存に失敗しました";
+    msg.style.display = "block";
+    return;
+  }
+  ta.value = d.statuses.join("\n");
+  alert("保存しました");
+}
 
 function renderProps() {
   const props = Auth.getProperties();

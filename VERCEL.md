@@ -54,8 +54,16 @@
 | `JWT_SECRET` | **本番必須**。ログイン用トークンの署名鍵。32 文字以上のランダム文字列（推奨）。 |
 | `SECRET_ID` | デジタライズ API のシークレット ID（ローカルの `.env` と同じ）。 |
 | `SECRET_PASSWORD` | デジタライズ API のシークレットパスワード。 |
+| `DATABASE_URL` / `TURSO_DATABASE_URL` | **顧客キャッシュ用 LibSQL**（推奨: [Turso](https://turso.tech/) の `libsql://...`）。Vercel 本番では未設定だと DB が開けず `500` になります。 |
+| `TURSO_AUTH_TOKEN` / `TURSO_API_TOKEN` | Turso を使うときのトークン（ダッシュボードで発行）。 |
 
 **Production / Preview / Development** のどれに付けるかは用途に合わせて選びます。少なくとも **Production** には入れてください。
+
+### 顧客一覧のローカル DB・差分同期
+
+- ローカル（`npm run dev`）では、未設定時 **`data/sync.db`** に顧客スナップショットが保存されます（`.gitignore` 対象）。
+- **差分同期**は、可能なときは API の `conditions`（`c.upd_date >` 最終更新）でまとめて取得し、不可なら **更新日降順のページング**でウォーターマークより新しい行だけを取り込みます（通信量を抑えます）。
+- **全件同期**は初回・リセット用です。一覧表示は同期後は **デジタライズへのリクエストなし**で DB から読みます。
 
 保存後、**Deployments** から **Redeploy**（最新デプロイの「…」メニュー）を実行すると、環境変数が反映されます。
 

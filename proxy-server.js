@@ -3,6 +3,15 @@ const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const {
+  runCustomerSync,
+  queryLocalCustomers,
+  getSyncStatus,
+  getVisitStatuses,
+  saveVisitStatuses,
+  patchLocalCustomer,
+  DEFAULT_VISIT_STATUSES,
+} = require("./lib/sync-service");
 
 const PORT = 3001;
 const API_HOST = "api.digital-eyes.jp";
@@ -223,6 +232,127 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ══ POST /sync/customers（デジタライズ → ローカルDB） ══
+  if (urlPath === "/sync/customers" && req.method === "POST") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const users = readJSON("users.json");
+      const user = users.find(u => u.id === session.userId);
+      const props = readJSON("properties.json");
+      const prop = props.find(p => p.id === user?.activePropertyId && p.userId === session.userId);
+      if (!prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
+      const body = await readBody(req);
+      const mode = body.mode === "full" ? "full" : "incremental";
+      const result = await runCustomerSync(prop, ENV, mode);
+      json(res, 200, result);
+    } catch (e) {
+      console.error("[sync/customers]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  // ══ GET /local/customers（DBキャッシュ参照・通信なし） ══
+  if (urlPath === "/local/customers" && req.method === "GET") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const users = readJSON("users.json");
+      const user = users.find(u => u.id === session.userId);
+      const props = readJSON("properties.json");
+      const prop = props.find(p => p.id === user?.activePropertyId && p.userId === session.userId);
+      if (!prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
+      const u = new URL(req.url || "/", "http://127.0.0.1");
+      const qp = {};
+      u.searchParams.forEach((v, k) => { qp[k] = v; });
+      const pack = await queryLocalCustomers(prop.id, qp);
+      json(res, 200, { ok: true, data: pack.data });
+    } catch (e) {
+      console.error("[local/customers]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  // ══ GET /local/sync-status ═══════════════════════
+  if (urlPath === "/local/sync-status" && req.method === "GET") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const users = readJSON("users.json");
+      const user = users.find(u => u.id === session.userId);
+      const props = readJSON("properties.json");
+      const prop = props.find(p => p.id === user?.activePropertyId && p.userId === session.userId);
+      if (!prop) { json(res, 200, { ok: true, rows_total: 0, hasData: false }); return; }
+      const st = await getSyncStatus(prop.id);
+      json(res, 200, { ok: true, ...st });
+    } catch (e) {
+      console.error("[local/sync-status]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  // ══ GET/PUT /local/visit-statuses（案件＝アクティブ物件ごと） ══
+  if (urlPath === "/local/visit-statuses" && req.method === "GET") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const users = readJSON("users.json");
+      const user = users.find(u => u.id === session.userId);
+      const props = readJSON("properties.json");
+      const prop = props.find(p => p.id === user?.activePropertyId && p.userId === session.userId);
+      if (!prop) { json(res, 200, { ok: true, statuses: DEFAULT_VISIT_STATUSES }); return; }
+      const arr = await getVisitStatuses(prop.id);
+      json(res, 200, { ok: true, statuses: arr });
+    } catch (e) {
+      console.error("[local/visit-statuses GET]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+  if (urlPath === "/local/visit-statuses" && req.method === "PUT") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const users = readJSON("users.json");
+      const user = users.find(u => u.id === session.userId);
+      const props = readJSON("properties.json");
+      const prop = props.find(p => p.id === user?.activePropertyId && p.userId === session.userId);
+      if (!prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
+      const body = await readBody(req);
+      const saved = await saveVisitStatuses(prop.id, body.statuses);
+      json(res, 200, { ok: true, statuses: saved });
+    } catch (e) {
+      console.error(e);
+      json(res, 400, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  // ══ PATCH /local/customers/:id（キャッシュ上書き） ══
+  if (urlPath.startsWith("/local/customers/") && req.method === "PATCH") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const users = readJSON("users.json");
+      const user = users.find(u => u.id === session.userId);
+      const props = readJSON("properties.json");
+      const prop = props.find(p => p.id === user?.activePropertyId && p.userId === session.userId);
+      if (!prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
+      const customerId = decodeURIComponent(urlPath.slice("/local/customers/".length));
+      if (!customerId) { json(res, 400, { ok: false, message: "顧客IDが不正です" }); return; }
+      const body = await readBody(req);
+      const result = await patchLocalCustomer(prop.id, customerId, body);
+      json(res, 200, result);
+    } catch (e) {
+      console.error(e);
+      json(res, 400, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
   // ══ POST /api/... → デジタライズAPIへプロキシ ══
   if (urlPath.startsWith("/api/")) {
     const session = getSession(getToken(req));
@@ -232,7 +362,7 @@ const server = http.createServer(async (req, res) => {
     const users = readJSON("users.json");
     const user = users.find(u => u.id === session.userId);
     const props = readJSON("properties.json");
-    const prop = props.find(p => p.id === user?.activePropertyId);
+    const prop = props.find(p => p.id === user?.activePropertyId && p.userId === session.userId);
     if (!prop) { json(res, 400, { ok: false, message: "物件が選択されていません。設定ページから物件を追加してください。" }); return; }
 
     let body = "";
