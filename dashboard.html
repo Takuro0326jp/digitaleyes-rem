@@ -7,7 +7,60 @@
 <link rel="stylesheet" href="common.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-.select-compare-group { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.select-compare-group {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid rgb(224,224,224);
+  border-radius: 6px;
+  background: #fff;
+}
+.select-compare-group .form-control {
+  width: 116px;
+  min-width: 0;
+  padding: 4px 8px;
+}
+.select-compare-group .btn {
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+.dashboard-top .data-header {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dashboard-top .data-header h1 {
+  margin-right: 4px;
+}
+.dashboard-top .select-compare-group {
+  margin-left: 12px;
+  flex-shrink: 0;
+}
+.trend-tabs .nav-link { min-width: 72px; }
+.section-header .select-compare-group { margin-left: auto; margin-right: 10px; }
+.weekly-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 30, 40, 0.35);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.weekly-modal.open { display: flex; }
+.weekly-modal__box {
+  width: min(520px, 92vw);
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #d9dee3;
+  padding: 16px;
+}
+.weekly-modal__head { font-weight: 700; margin-bottom: 12px; }
+.weekly-modal__row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.weekly-modal__actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>
 </head>
 <body>
@@ -24,6 +77,231 @@
 <script src="common.js"></script>
 <script>
 const STATUSES = ["資料請求・エントリー","来場予約","新規来場","再来場","再々来場1","要望","登録","申込","契約","引渡","検討中止"];
+let trendMode = "month";
+let dashStartDate = "";
+let dashEndDate = "";
+let weeklyReportLoading = false;
+const DASH_CACHE_TTL_MS = 10 * 60 * 1000;
+
+function toDateInputValue(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function startOfWeek(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function endOfWeek(date) {
+  const e = startOfWeek(date);
+  e.setDate(e.getDate() + 6);
+  e.setHours(23, 59, 59, 999);
+  return e;
+}
+function ensureDashboardDateRange() {
+  if (dashEndDate) return;
+  dashStartDate = "";
+  dashEndDate = toDateInputValue(new Date());
+}
+function normalizeYmd(v) {
+  if (!v) return "";
+  const s = String(v).trim();
+  const m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+  return toDateInputValue(d);
+}
+function inRange(ymd, start, end) {
+  const n = normalizeYmd(ymd);
+  if (!n) return false;
+  if (start && end) return n >= start && n <= end;
+  if (start) return n >= start;
+  if (end) return n <= end;
+  return true;
+}
+function monthlyBuckets(endDateStr, count = 6) {
+  const end = new Date(`${endDateStr}T00:00:00`);
+  const out = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(end.getFullYear(), end.getMonth() - i, 1);
+    out.push({
+      label: `${d.getFullYear()}/${d.getMonth() + 1}月`,
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+    });
+  }
+  return out;
+}
+function weeklyBuckets(endDateStr, count = 8) {
+  const end = endOfWeek(new Date(`${endDateStr}T00:00:00`));
+  const out = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const e = new Date(end);
+    e.setDate(e.getDate() - i * 7);
+    const s = new Date(e);
+    s.setDate(e.getDate() - 6);
+    out.push({
+      label: `${s.getMonth() + 1}/${s.getDate()}(月)〜${e.getMonth() + 1}/${e.getDate()}(日)`,
+      start: toDateInputValue(s),
+      end: toDateInputValue(e),
+      key: `${toDateInputValue(s)}_${toDateInputValue(e)}`,
+    });
+  }
+  return out;
+}
+function onDashboardDateChange() {
+  const s = document.getElementById("dStart")?.value || dashStartDate;
+  const e = document.getElementById("dEnd")?.value || dashEndDate;
+  if (s && e && s > e) {
+    alert("開始日は終了日以前にしてください");
+    return;
+  }
+  dashStartDate = s;
+  dashEndDate = e;
+  loadDashboard();
+}
+function setTrendMode(mode) {
+  trendMode = mode === "week" ? "week" : "month";
+  loadDashboard();
+}
+function ensureWeeklyReportModal() {
+  if (document.getElementById("weeklyReportModal")) return;
+  const div = document.createElement("div");
+  div.id = "weeklyReportModal";
+  div.className = "weekly-modal";
+  div.innerHTML = `
+    <div class="weekly-modal__box">
+      <div class="weekly-modal__head">週報作成</div>
+      <div class="weekly-modal__row">
+        <input id="wrStart" type="date" class="form-control">
+        <span>〜</span>
+        <input id="wrEnd" type="date" class="form-control">
+      </div>
+      <div class="weekly-modal__actions">
+        <button class="btn btn-sm" onclick="closeWeeklyReportModal()">キャンセル</button>
+        <button class="btn btn-primary-solid btn-sm" id="btnWeeklyDownload" onclick="downloadWeeklyReport()">ダウンロード</button>
+      </div>
+    </div>
+  `;
+  div.addEventListener("click", (e) => { if (e.target === div) closeWeeklyReportModal(); });
+  document.body.appendChild(div);
+}
+function openWeeklyReportModal() {
+  ensureWeeklyReportModal();
+  const s = document.getElementById("wrStart");
+  const e = document.getElementById("wrEnd");
+  if (s && !s.value) s.value = dashStartDate || toDateInputValue(startOfWeek(new Date()));
+  if (e && !e.value) e.value = dashEndDate || toDateInputValue(endOfWeek(new Date()));
+  document.getElementById("weeklyReportModal").classList.add("open");
+}
+function closeWeeklyReportModal() {
+  document.getElementById("weeklyReportModal")?.classList.remove("open");
+}
+async function downloadWeeklyReport() {
+  if (weeklyReportLoading) return;
+  const s = document.getElementById("wrStart")?.value || "";
+  const e = document.getElementById("wrEnd")?.value || "";
+  if (!s || !e) { alert("期間を選択してください"); return; }
+  if (s > e) { alert("開始日は終了日以前にしてください"); return; }
+  const active = Auth.getActiveProperty();
+  if (!active?.id) { alert("物件が選択されていません"); return; }
+  weeklyReportLoading = true;
+  const btn = document.getElementById("btnWeeklyDownload");
+  if (btn) btn.textContent = "生成中...";
+  try {
+    const params = new URLSearchParams({ startDate: s, endDate: e });
+    const res = await fetch(`${CONFIG.API_BASE}/api/properties/${encodeURIComponent(active.id)}/weekly-report/download?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    if (!res.ok) throw new Error("ダウンロードに失敗しました");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `週間報告書_${s.replace(/-/g, "")}_${e.replace(/-/g, "")}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    closeWeeklyReportModal();
+  } catch (err) {
+    alert(err.message || "ダウンロードに失敗しました");
+  } finally {
+    weeklyReportLoading = false;
+    if (btn) btn.textContent = "ダウンロード";
+  }
+}
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} がタイムアウトしました`)), ms)),
+  ]);
+}
+function parseCountLike(v) {
+  if (v == null) return 0;
+  const s = String(v);
+  if (s.includes("/")) return Number(s.split("/").pop()) || 0;
+  return Number(s) || 0;
+}
+async function fetchAllCustomersForDashboard(fields) {
+  const chunk = 500;
+  let page = 1;
+  let rows = [];
+  let total = 0;
+  while (true) {
+    const data = await withTimeout(
+      apiCall({
+        page,
+        limit: chunk,
+        fields: JSON.stringify(fields),
+        order: JSON.stringify(["c.upd_date desc"]),
+      }),
+      12000,
+      `顧客集計データ取得(page:${page})`
+    );
+    const part = data.result || [];
+    total = parseCountLike(data.total_count || data.count || 0);
+    rows = rows.concat(part);
+    if (!part.length) break;
+    if (total > 0 && rows.length >= total) break;
+    page += 1;
+    if (page > 200) break;
+  }
+  return rows;
+}
+function dashCacheKey(activePropertyId) {
+  return `dashboard:customers:${String(activePropertyId || "-")}`;
+}
+function loadDashboardCache(activePropertyId) {
+  try {
+    const raw = localStorage.getItem(dashCacheKey(activePropertyId));
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !Array.isArray(obj.rows) || !obj.cachedAt) return null;
+    if (Date.now() - Number(obj.cachedAt) > DASH_CACHE_TTL_MS) return null;
+    return obj.rows;
+  } catch (_) {
+    return null;
+  }
+}
+function saveDashboardCache(activePropertyId, rows) {
+  try {
+    localStorage.setItem(
+      dashCacheKey(activePropertyId),
+      JSON.stringify({ cachedAt: Date.now(), rows: Array.isArray(rows) ? rows : [] })
+    );
+  } catch (_) {}
+}
+async function getDashboardCustomersCached(activePropertyId) {
+  const cached = loadDashboardCache(activePropertyId);
+  if (cached) return cached;
+  const rows = await fetchAllCustomersForDashboard(["c.id","c.status","c.baitai","c.date_entry","c.name","c.kana"]);
+  saveDashboardCache(activePropertyId, rows);
+  return rows;
+}
 
 async function loadDashboard() {
   try {
@@ -37,14 +315,18 @@ async function loadDashboard() {
         </section>`;
       return;
     }
+    ensureDashboardDateRange();
     // ステータス別集計
-    const [allData, recentData] = await Promise.all([
-      apiCall({ limit: 1000, fields: JSON.stringify(["c.id","c.status","c.baitai","c.date_entry","c.name","c.kana"]) }),
-      apiCall({ limit: 10, fields: JSON.stringify(["c.id","c.name","c.kana","c.baitai","c.date_entry","c.status"]), order: JSON.stringify(["c.date_entry desc"]) })
+    const [allRows] = await Promise.all([
+      getDashboardCustomersCached(Auth.getActiveProperty()?.id),
     ]);
 
-    const all = allData.result || [];
-    const recent = recentData.result || [];
+    const all = allRows || [];
+    const recent = all
+      .filter((c) => inRange(c["c.date_entry"], dashStartDate, dashEndDate))
+      .sort((a, b) => normalizeYmd(b["c.date_entry"]).localeCompare(normalizeYmd(a["c.date_entry"])))
+      .slice(0, 10);
+    const allInRange = all.filter((c) => inRange(c["c.date_entry"], dashStartDate, dashEndDate));
 
     // 集計
     const counts = {};
@@ -52,44 +334,47 @@ async function loadDashboard() {
     all.forEach(c => { if (counts[c["c.status"]] !== undefined) counts[c["c.status"]]++; });
 
     const total = all.length;
+    const hpCount = all.filter(c=>c["c.baitai"]==="公式HP").length;
+    const portalCount = all.filter(c=>c["c.baitai"]&&c["c.baitai"]!=="公式HP").length;
+    const otherCount = Math.max(0, total - hpCount - portalCount);
     const visited = (counts["新規来場"]||0) + (counts["再来場"]||0) + (counts["再々来場1"]||0) + (counts["申込"]||0) + (counts["契約"]||0) + (counts["引渡"]||0);
     const contracted = counts["契約"] || 0;
     const applied = counts["申込"] || 0;
     const requested = counts["要望"] || 0;
 
     // 月別集計（最近6ヶ月）
-    const months = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(); d.setMonth(d.getMonth() - i);
-      months.push({ label: `${d.getFullYear()}/${d.getMonth()+1}月`, key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` });
-    }
+    const months = monthlyBuckets(dashEndDate, 6);
     const monthCounts = {};
     months.forEach(m => monthCounts[m.key] = 0);
-    all.forEach(c => {
-      const d = c["c.date_entry"];
+    allInRange.forEach(c => {
+      const d = normalizeYmd(c["c.date_entry"]);
       if (d) {
         const k = d.slice(0,7);
         if (monthCounts[k] !== undefined) monthCounts[k]++;
       }
     });
 
+    const active = Auth.getActiveProperty() || {};
+    const propertyName = (() => {
+      const raw = active?.name ?? active?.propertyName ?? "";
+      const s = String(raw).trim();
+      return s && s !== "undefined" ? s : `物件(${active?.id || "-"})`;
+    })();
+    const dashboardImage = active.thumbnailUrl
+      ? `<img src="${active.thumbnailUrl}" alt="物件画像" style="width:273px;height:295px;object-fit:cover;display:block;border:1px solid rgba(224,224,224,0.8)">`
+      : `<div style="width:273px;height:295px;background:rgba(224,224,224,0.4);display:flex;align-items:center;justify-content:center;color:rgb(150,160,170);font-size:13px">物件画像</div>`;
+
     document.getElementById("mainContent").innerHTML = `
       <!-- 物件概要 -->
       <section class="section" style="padding-top:20px">
         <div class="dashboard-top">
           <div class="dashboard-top__image">
-            <div style="width:273px;height:295px;background:rgba(224,224,224,0.4);display:flex;align-items:center;justify-content:center;color:rgb(150,160,170);font-size:13px">物件画像</div>
+            ${dashboardImage}
           </div>
           <div class="dashboard-top__data">
             <div class="data-header d-flex align-items-center">
-              <h1>${CONFIG.PROPERTY_NAME}</h1>
+              <h1>${propertyName}</h1>
               <a href="property.html" class="link-small" style="margin-left:16px">物件概要</a>
-              <div class="ms-auto select-compare-group">
-                <input type="text" class="form-control" value="${getWeekRange()}">
-                <span>〜</span>
-                <input type="text" class="form-control" value="${getWeekEnd()}">
-                <button class="btn">週報作成 ▼</button>
-              </div>
             </div>
             <div class="d-flex mb-4">
               <div>
@@ -111,8 +396,9 @@ async function loadDashboard() {
                 <div class="item-number">${total}<small>件</small></div>
                 <div class="d-flex justify-content-center mt-3">
                   <div class="item-sub text-nowrap">
-                    <dl><dt>HP反響数</dt><dd>${all.filter(c=>c["c.baitai"]==="公式HP").length}</dd></dl>
-                    <dl><dt>ポータル反響数</dt><dd>${all.filter(c=>c["c.baitai"]&&c["c.baitai"]!=="公式HP").length}</dd></dl>
+                    <dl><dt>HP反響数</dt><dd>${hpCount}</dd></dl>
+                    <dl><dt>ポータル反響数</dt><dd>${portalCount}</dd></dl>
+                    <dl><dt>その他（未設定含む）</dt><dd>${otherCount}</dd></dl>
                   </div>
                 </div>
               </li>
@@ -163,19 +449,29 @@ async function loadDashboard() {
       <section class="section">
         <div class="section-header d-flex align-items-center">
           <h2 class="section-heading me-3">反響推移</h2>
-          <ul class="nav-tabs">
-            <li><button class="nav-link active">月別</button></li>
+          <div class="select-compare-group">
+            <input id="dStart" type="date" class="form-control" value="${dashStartDate}" onchange="onDashboardDateChange()">
+            <span>〜</span>
+            <input id="dEnd" type="date" class="form-control" value="${dashEndDate}" onchange="onDashboardDateChange()">
+            <button class="btn" onclick="openWeeklyReportModal()">週報作成 ▼</button>
+          </div>
+          <ul class="nav-tabs trend-tabs">
+            <li><button class="nav-link ${trendMode === "week" ? "active" : ""}" onclick="setTrendMode('week')">週別</button></li>
+            <li><button class="nav-link ${trendMode === "month" ? "active" : ""}" onclick="setTrendMode('month')">月別</button></li>
           </ul>
         </div>
         <div class="table-scroll">
           <table>
             <thead>
-              <tr><th class="th-left"></th>${months.map(m=>`<th>${m.label}</th>`).join('')}</tr>
+              <tr><th class="th-left"></th>${(trendMode === "week" ? weeklyBuckets(dashEndDate, 8) : months).map(m=>`<th>${m.label}</th>`).join('')}<th>合計</th></tr>
             </thead>
             <tbody>
               ${STATUSES.map(s => {
-                const mCounts = months.map(m => all.filter(c => c["c.status"]===s && c["c.date_entry"] && c["c.date_entry"].slice(0,7)===m.key).length);
-                return `<tr class="row-main"><td>${s}</td>${mCounts.map(n=>`<td>${n}</td>`).join('')}</tr>`;
+                const mCounts = trendMode === "week"
+                  ? weeklyBuckets(dashEndDate, 8).map(m => allInRange.filter(c => c["c.status"]===s && c["c.date_entry"] && inRange(c["c.date_entry"], m.start, m.end)).length)
+                  : months.map(m => allInRange.filter(c => c["c.status"]===s && normalizeYmd(c["c.date_entry"]).slice(0,7)===m.key).length);
+                const sum = mCounts.reduce((a,b)=>a+b,0);
+                return `<tr class="row-main"><td>${s}</td>${mCounts.map(n=>`<td>${n}</td>`).join('')}<td><strong>${sum}</strong></td></tr>`;
               }).join('')}
             </tbody>
           </table>
@@ -192,7 +488,7 @@ async function loadDashboard() {
                 <td style="width:100px">${c["c.date_entry"]||""}</td>
                 <td style="font-weight:600">${c["c.name"]||""}</td>
                 <td style="width:100px">${baitaiBadge(c["c.baitai"])}</td>
-                <td>${CONFIG.PROPERTY_NAME}</td>
+                <td>${propertyName}</td>
                 <td style="width:60px"><a href="customer.html">詳細</a></td>
               </tr>
             `).join('')}
@@ -203,7 +499,7 @@ async function loadDashboard() {
 
       <!-- 推移グラフ -->
       <section class="section">
-        <div class="section-header"><h2 class="section-heading">月別反響推移グラフ</h2></div>
+        <div class="section-header"><h2 class="section-heading">${trendMode === "week" ? "週別反響推移グラフ" : "月別反響推移グラフ"}</h2></div>
         <div style="max-width:800px">
           <canvas id="trendChart" height="120"></canvas>
         </div>
@@ -219,7 +515,7 @@ async function loadDashboard() {
             </thead>
             <tbody>
               ${["公式HP","SUUMO","Yahoo!不動産","HOMES","アットホーム"].map(b => {
-                const mCounts = months.map(m => all.filter(c => c["c.baitai"]===b && c["c.date_entry"] && c["c.date_entry"].slice(0,7)===m.key).length);
+                const mCounts = months.map(m => allInRange.filter(c => c["c.baitai"]===b && normalizeYmd(c["c.date_entry"]).slice(0,7)===m.key).length);
                 const total = mCounts.reduce((a,b)=>a+b,0);
                 if (total === 0) return '';
                 return `<tr class="row-main"><td>${b}</td>${mCounts.map(n=>`<td>${n||0}</td>`).join('')}<td><strong>${total}</strong></td></tr>`;
@@ -231,13 +527,17 @@ async function loadDashboard() {
     `;
 
     // グラフ描画
+    const chartBuckets = trendMode === "week" ? weeklyBuckets(dashEndDate, 8) : months;
+    const chartValues = trendMode === "week"
+      ? chartBuckets.map((b) => allInRange.filter((c) => c["c.date_entry"] && inRange(c["c.date_entry"], b.start, b.end)).length)
+      : chartBuckets.map((m) => monthCounts[m.key] || 0);
     new Chart(document.getElementById("trendChart"), {
       type: "bar",
       data: {
-        labels: months.map(m => m.label),
+        labels: chartBuckets.map((m) => m.label),
         datasets: [{
           label: "反響数",
-          data: months.map(m => monthCounts[m.key] || 0),
+          data: chartValues,
           backgroundColor: "rgba(53,124,176,0.7)",
           borderColor: "rgb(53,124,176)",
           borderWidth: 1

@@ -6,20 +6,24 @@
 <title>物件一覧 | Real Estate Manager by DIGITALEYES</title>
 <link rel="stylesheet" href="common.css">
 <style>
-.property-card { border: 1px solid rgb(224,224,224); padding: 24px; margin-bottom: 16px; display: flex; gap: 24px; }
-.property-card:hover { background: rgba(53,124,176,0.03); }
-.property-img { width: 200px; height: 140px; background: rgba(224,224,224,0.4); flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: rgb(150,160,170); font-size: 12px; }
-.property-info { flex: 1; }
-.property-name { font-size: 18px; font-weight: 700; color: rgb(70,83,98); margin-bottom: 8px; }
-.property-stats { display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 12px; }
-.stat-item { text-align: center; }
-.stat-label { font-size: 11px; color: rgb(120,130,140); margin-bottom: 2px; }
-.stat-value { font-size: 22px; font-weight: 700; color: rgb(53,124,176); }
-.stat-value small { font-size: 12px; color: rgb(70,83,98); font-weight: 400; }
-.property-meta { font-size: 12px; color: rgb(120,130,140); display: flex; gap: 20px; flex-wrap: wrap; }
-.property-meta dt { font-weight: 600; display: inline; }
-.property-meta dd { display: inline; margin-left: 4px; margin-right: 16px; }
-.property-actions { display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+.toolbar { margin-bottom: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.search-input { width: 260px; padding: 8px 10px; border: 1px solid #ced4da; font-size: 13px; font-family: inherit; }
+.select-sm { min-width: 180px; padding: 8px 10px; border: 1px solid #ced4da; font-size: 13px; font-family: inherit; }
+.table-scroll { background: #fff; border: 1px solid rgb(224,224,224); }
+.sortable { cursor: pointer; user-select: none; }
+.sortable .arrow { margin-left: 4px; color: rgb(120,130,140); font-size: 10px; }
+.property-cell { display: flex; align-items: center; gap: 10px; min-height: 54px; }
+.thumb { width: 64px; height: 48px; border: 1px solid rgb(224,224,224); background: #f2f2f2; flex-shrink: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; color: rgb(150,160,170); font-size: 10px; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.property-name { font-weight: 700; color: rgb(70,83,98); }
+.row-clickable { cursor: pointer; }
+.muted { color: rgb(150,160,170); }
+.pagination { margin-top: 14px; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 1000; display: none; align-items: center; justify-content: center; }
+.modal-box { background: #fff; width: 560px; box-shadow: 0 8px 40px rgba(0,0,0,.2); }
+.modal-header { background: rgb(70,83,98); color: #fff; padding: 14px 20px; display: flex; align-items: center; justify-content: space-between; }
+.modal-body { padding: 20px; }
+.modal-footer { border-top: 1px solid rgb(224,224,224); padding: 12px 20px; display: flex; justify-content: flex-end; gap: 8px; }
 </style>
 </head>
 <body>
@@ -30,87 +34,352 @@
     <div class="page-title-bar">
       <h1>物件一覧</h1>
     </div>
+
+    <div class="toolbar">
+      <button class="btn btn-primary-solid btn-sm" onclick="goNew()">新規登録</button>
+      <button id="btnSelectAll" class="btn btn-sm" onclick="toggleSelectAll()">全て選択</button>
+      <button id="btnDeleteSelected" class="btn btn-sm" onclick="openBulkDeleteModal()" disabled>削除</button>
+      <label style="margin-left:10px"><input type="checkbox" id="showSoldout" onchange="onFilterChange()"> 完売物件を表示</label>
+      <select id="salesStatusFilter" class="select-sm" onchange="onFilterChange()">
+        <option value="">販売状況: すべて</option>
+      </select>
+      <input id="keyword" class="search-input" type="text" placeholder="物件名で検索">
+    </div>
+
     <div id="content"><div class="loading-spinner"></div></div>
+    <div class="pagination" id="pagination"></div>
   </main>
 </div>
 </div>
+
+<div class="modal-overlay" id="singleDeleteModal" onclick="closeSingleDeleteModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header"><h3>物件削除</h3><button class="modal-close" onclick="closeSingleDeleteModal()">✕</button></div>
+    <div class="modal-body" id="singleDeleteText"></div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" onclick="closeSingleDeleteModal()">キャンセル</button>
+      <button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="confirmSingleDelete()">削除する</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="bulkDeleteModal" onclick="closeBulkDeleteModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header"><h3>一括削除</h3><button class="modal-close" onclick="closeBulkDeleteModal()">✕</button></div>
+    <div class="modal-body" id="bulkDeleteText"></div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" onclick="closeBulkDeleteModal()">キャンセル</button>
+      <button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="confirmBulkDelete()">削除する</button>
+    </div>
+  </div>
+</div>
+
 <script src="common.js"></script>
 <script>
-async function load() {
-  try {
-    const data = await apiCall({
-      limit: 1000,
-      fields: JSON.stringify(["c.id","c.status","c.baitai","c.date_entry","c.date_visit","c.bukkenflag"])
-    });
-    const all = data.result || [];
-    const total = all.length;
-    const visited = all.filter(c => ["新規来場","再来場","再々来場1","申込","契約","引渡"].includes(c["c.status"])).length;
-    const contracted = all.filter(c => c["c.status"]==="契約").length;
-    const applied = all.filter(c => c["c.status"]==="申込").length;
-    const requested = all.filter(c => c["c.status"]==="要望").length;
+const PAGE_SIZE = 20;
+let allRows = [];
+let filteredRows = [];
+let selectedIds = new Set();
+let page = 1;
+let sortKey = "registeredAt";
+let sortDir = "desc";
+let deleteTarget = null;
+let searchTimer = null;
 
-    document.getElementById("content").innerHTML = `
-      <div class="property-card">
-        <div class="property-img">物件画像</div>
-        <div class="property-info">
-          <div class="property-name">${CONFIG.PROPERTY_NAME}</div>
-          <div class="property-stats">
-            <div class="stat-item"><div class="stat-label">総反響数</div><div class="stat-value">${total}<small>件</small></div></div>
-            <div class="stat-item"><div class="stat-label">総来場数</div><div class="stat-value">${visited}<small>件</small></div></div>
-            <div class="stat-item"><div class="stat-label">成約数</div><div class="stat-value">${contracted}<small>件</small></div></div>
-            <div class="stat-item"><div class="stat-label">申込数</div><div class="stat-value">${applied}<small>件</small></div></div>
-            <div class="stat-item"><div class="stat-label">要望数</div><div class="stat-value">${requested}<small>件</small></div></div>
-            <div class="stat-item"><div class="stat-label">来場率</div><div class="stat-value">${total>0?(visited/total*100).toFixed(1):0}<small>%</small></div></div>
-            <div class="stat-item"><div class="stat-label">成約率</div><div class="stat-value">${visited>0?(contracted/visited*100).toFixed(1):0}<small>%</small></div></div>
-          </div>
-          <dl class="property-meta">
-            <div><dt>HP公開日</dt><dd>2024年08月01日</dd></div>
-            <div><dt>来場開始日</dt><dd>2024年10月26日</dd></div>
-            <div><dt>販売開始日</dt><dd>2024年11月23日</dd></div>
-            <div><dt>総戸数</dt><dd>36戸</dd></div>
-            <div><dt>残戸数</dt><dd>27戸</dd></div>
-            <div><dt>テーブル名</dt><dd>${CONFIG.TABLE_NAME}</dd></div>
-          </dl>
-        </div>
-        <div class="property-actions">
-          <a href="dashboard.html" class="btn">ダッシュボード</a>
-          <a href="customer.html" class="btn">顧客一覧</a>
-        </div>
-      </div>
+const SORTABLE_COLUMNS = [
+  { key: "name", label: "物件名" },
+  { key: "salesStatus", label: "販売状況" },
+  { key: "buildingConfirmDate", label: "建築確認取得日" },
+  { key: "remainingRate", label: "残戸数/販売戸数" },
+  { key: "completionDate", label: "竣工年月日" },
+];
 
-      <!-- ステータス別内訳 -->
-      <section class="section" style="margin-top:24px">
-        <div class="section-header"><h2 class="section-heading">ステータス別内訳</h2></div>
-        <table class="list-table" style="max-width:600px">
-          <thead><tr><th>ステータス</th><th style="text-align:right">件数</th><th style="text-align:right">構成比</th></tr></thead>
-          <tbody>
-          ${["資料請求・エントリー","来場予約","新規来場","再来場","再々来場1","要望","登録","申込","契約","引渡","検討中止"].map(s => {
-            const cnt = all.filter(c=>c["c.status"]===s).length;
-            if (!cnt) return "";
-            return `<tr><td>${statusBadge(s)}</td><td style="text-align:right;font-weight:600">${cnt}</td><td style="text-align:right;color:rgb(120,130,140)">${(cnt/total*100).toFixed(1)}%</td></tr>`;
-          }).join("")}
-          </tbody>
-        </table>
-      </section>
+function valueOrDash(v) {
+  return v === undefined || v === null || String(v).trim() === "" ? "―" : String(v);
+}
 
-      <!-- 媒体別内訳 -->
-      <section class="section">
-        <div class="section-header"><h2 class="section-heading">媒体別反響内訳</h2></div>
-        <table class="list-table" style="max-width:500px">
-          <thead><tr><th>媒体</th><th style="text-align:right">件数</th><th style="text-align:right">構成比</th></tr></thead>
-          <tbody>
-          ${["公式HP","SUUMO","Yahoo!不動産","HOMES","アットホーム","その他"].map(b => {
-            const cnt = b==="その他" ? all.filter(c=>!["公式HP","SUUMO","Yahoo!不動産","HOMES","アットホーム"].includes(c["c.baitai"])&&c["c.baitai"]).length : all.filter(c=>c["c.baitai"]===b).length;
-            if (!cnt) return "";
-            return `<tr><td>${baitaiBadge(b)||b}</td><td style="text-align:right;font-weight:600">${cnt}</td><td style="text-align:right;color:rgb(120,130,140)">${(cnt/total*100).toFixed(1)}%</td></tr>`;
-          }).join("")}
-          </tbody>
-        </table>
-      </section>
-    `;
-  } catch(e) {
-    document.getElementById("content").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`;
+function statusOf(p) {
+  return p.salesStatus || (p.isSoldOut ? "完売" : "販売中");
+}
+
+function toRow(p, i) {
+  const sold = p.isSoldOut || statusOf(p) === "完売";
+  const salesUnits = Number(p.salesUnits || 0);
+  const remainingUnits = p.remainingUnits === undefined || p.remainingUnits === null ? null : Number(p.remainingUnits);
+  const registeredAt = p.createdAt || p.insDate || p.updatedAt || String(i);
+  return {
+    id: p.id,
+    name: p.name || "―",
+    salesStatus: statusOf(p),
+    buildingConfirmDate: p.buildingConfirmDate || p.kakuninDate || "",
+    salesUnits,
+    remainingUnits,
+    remainingRate: remainingUnits === null ? "" : `${remainingUnits}/${salesUnits || 0}`,
+    completionDate: p.completionDate || p.kanseiDate || "",
+    thumbnailUrl: p.thumbnailUrl || p.thumbUrl || "",
+    soldOut: sold,
+    raw: p,
+    registeredAt
+  };
+}
+
+function arrowFor(key) {
+  if (sortKey !== key) return "";
+  return sortDir === "asc" ? "▲" : "▼";
+}
+
+function renderHeaderSort() {
+  return SORTABLE_COLUMNS.map((c) => {
+    return `<th class="sortable" onclick="setSort('${c.key}')">${c.label}<span class="arrow">${arrowFor(c.key)}</span></th>`;
+  }).join("");
+}
+
+function getCurrentPageFromUrl() {
+  const p = parseInt(new URLSearchParams(location.search).get("page"), 10);
+  return Number.isFinite(p) && p > 0 ? p : 1;
+}
+
+function setPageToUrl(p) {
+  const u = new URL(location.href);
+  u.searchParams.set("page", String(p));
+  history.replaceState(null, "", u.toString());
+}
+
+function applyFiltersAndSort() {
+  const showSold = document.getElementById("showSoldout").checked;
+  const statusFilter = document.getElementById("salesStatusFilter").value;
+  const keyword = document.getElementById("keyword").value.trim().toLowerCase();
+
+  filteredRows = allRows.filter((r) => {
+    if (!showSold && r.soldOut) return false;
+    if (statusFilter && r.salesStatus !== statusFilter) return false;
+    if (keyword && !r.name.toLowerCase().includes(keyword)) return false;
+    return true;
+  });
+
+  filteredRows.sort((a, b) => {
+    const va = a[sortKey] ?? "";
+    const vb = b[sortKey] ?? "";
+    let cmp;
+    if (sortKey === "remainingRate") {
+      const ra = a.remainingUnits ?? 999999;
+      const rb = b.remainingUnits ?? 999999;
+      cmp = ra - rb;
+    } else {
+      cmp = String(va).localeCompare(String(vb), "ja");
+    }
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+}
+
+function renderTable() {
+  applyFiltersAndSort();
+  const maxPage = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  if (page > maxPage) page = maxPage;
+  setPageToUrl(page);
+  const start = (page - 1) * PAGE_SIZE;
+  const rows = filteredRows.slice(start, start + PAGE_SIZE);
+
+  if (!rows.length) {
+    document.getElementById("content").innerHTML = `<div class="empty-msg">該当する物件が見つかりません</div>`;
+    renderPagination();
+    updateSelectUi();
+    return;
   }
+
+  document.getElementById("content").innerHTML = `
+    <div class="table-scroll">
+      <table class="list-table">
+        <thead>
+          <tr>
+            <th style="width:36px"><input type="checkbox" ${rows.length && rows.every((r) => selectedIds.has(r.id)) ? "checked" : ""} onclick="toggleSelectVisible(event)"></th>
+            ${renderHeaderSort()}
+            <th style="width:70px">詳細</th>
+            <th style="width:70px">削除</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((r) => `
+            <tr class="row-clickable" onclick="goDetail('${r.id}')">
+              <td onclick="event.stopPropagation()"><input type="checkbox" ${selectedIds.has(r.id) ? "checked" : ""} onchange="toggleSelectOne('${r.id}')"></td>
+              <td>
+                <div class="property-cell">
+                  <div class="thumb">
+                    ${r.thumbnailUrl ? `<img src="${r.thumbnailUrl}" alt="">` : `<span>placeholder</span>`}
+                  </div>
+                  <div class="property-name">${valueOrDash(r.name)}</div>
+                </div>
+              </td>
+              <td>${valueOrDash(r.salesStatus)}</td>
+              <td>${valueOrDash(r.buildingConfirmDate)}</td>
+              <td>${valueOrDash(r.remainingRate)}</td>
+              <td>${valueOrDash(r.completionDate)}</td>
+              <td onclick="event.stopPropagation()"><a href="property-detail.html?id=${encodeURIComponent(r.id)}">詳細</a></td>
+              <td onclick="event.stopPropagation()"><button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="openSingleDeleteModal('${r.id}')">削除</button></td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+  renderPagination();
+  updateSelectUi();
+}
+
+function renderPagination() {
+  const totalPage = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  if (totalPage <= 1) {
+    document.getElementById("pagination").innerHTML = "";
+    return;
+  }
+  let html = `<button onclick="goPage(${page - 1})" ${page === 1 ? "disabled" : ""}>＜</button>`;
+  const from = Math.max(1, page - 3);
+  const to = Math.min(totalPage, from + 6);
+  for (let p = from; p <= to; p++) {
+    html += `<button class="${p === page ? "active" : ""}" onclick="goPage(${p})">${p}</button>`;
+  }
+  html += `<button onclick="goPage(${page + 1})" ${page === totalPage ? "disabled" : ""}>＞</button>`;
+  document.getElementById("pagination").innerHTML = html;
+}
+
+function goPage(p) {
+  const totalPage = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  if (p < 1 || p > totalPage) return;
+  page = p;
+  renderTable();
+}
+
+function updateSelectUi() {
+  const selectedCount = selectedIds.size;
+  const deleteBtn = document.getElementById("btnDeleteSelected");
+  deleteBtn.disabled = selectedCount === 0;
+  document.getElementById("btnSelectAll").textContent = selectedCount ? "選択解除" : "全て選択";
+}
+
+function toggleSelectOne(id) {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+  updateSelectUi();
+}
+
+function toggleSelectVisible(e) {
+  const checked = e.target.checked;
+  const start = (page - 1) * PAGE_SIZE;
+  const rows = filteredRows.slice(start, start + PAGE_SIZE);
+  rows.forEach((r) => {
+    if (checked) selectedIds.add(r.id);
+    else selectedIds.delete(r.id);
+  });
+  renderTable();
+}
+
+function toggleSelectAll() {
+  if (selectedIds.size) selectedIds.clear();
+  else filteredRows.forEach((r) => selectedIds.add(r.id));
+  renderTable();
+}
+
+function setSort(key) {
+  if (sortKey === key) sortDir = sortDir === "asc" ? "desc" : "asc";
+  else {
+    sortKey = key;
+    sortDir = "asc";
+  }
+  renderTable();
+}
+
+function onFilterChange() {
+  page = 1;
+  renderTable();
+}
+
+function bindSearch() {
+  const input = document.getElementById("keyword");
+  input.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      page = 1;
+      renderTable();
+    }, 300);
+  });
+}
+
+function populateSalesStatusFilter() {
+  const current = document.getElementById("salesStatusFilter").value;
+  document.getElementById("salesStatusFilter").innerHTML = '<option value="">販売状況: すべて</option>';
+  const statuses = [...new Set(allRows.map((r) => r.salesStatus).filter(Boolean))];
+  const el = document.getElementById("salesStatusFilter");
+  statuses.forEach((s) => {
+    const opt = document.createElement("option");
+    opt.value = s;
+    opt.textContent = s;
+    el.appendChild(opt);
+  });
+  if (current) el.value = current;
+}
+
+function goNew() {
+  location.href = "settings.html";
+}
+
+function goDetail(id) {
+  location.href = `property-detail.html?id=${encodeURIComponent(id)}`;
+}
+
+function openSingleDeleteModal(id) {
+  deleteTarget = id;
+  const row = allRows.find((r) => r.id === id);
+  document.getElementById("singleDeleteText").textContent = `${row ? row.name : "この物件"} を削除します。この操作は取り消せません。`;
+  document.getElementById("singleDeleteModal").style.display = "flex";
+}
+
+function closeSingleDeleteModal() {
+  deleteTarget = null;
+  document.getElementById("singleDeleteModal").style.display = "none";
+}
+
+function openBulkDeleteModal() {
+  if (!selectedIds.size) return;
+  document.getElementById("bulkDeleteText").textContent = `選択した ${selectedIds.size} 件を削除します。この操作は取り消せません。`;
+  document.getElementById("bulkDeleteModal").style.display = "flex";
+}
+
+function closeBulkDeleteModal() {
+  document.getElementById("bulkDeleteModal").style.display = "none";
+}
+
+async function confirmSingleDelete() {
+  if (!deleteTarget) return;
+  await deleteByIds([deleteTarget]);
+  closeSingleDeleteModal();
+}
+
+async function confirmBulkDelete() {
+  if (!selectedIds.size) return;
+  await deleteByIds([...selectedIds]);
+  closeBulkDeleteModal();
+}
+
+async function deleteByIds(ids) {
+  for (const id of ids) {
+    await fetch(`${CONFIG.API_BASE}/user/properties/${id}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${Auth.getToken()}` }
+    });
+  }
+  selectedIds.clear();
+  await requireAuth();
+  allRows = Auth.getProperties().map(toRow);
+  populateSalesStatusFilter();
+  renderTable();
+}
+
+function load() {
+  allRows = Auth.getProperties().map(toRow);
+  page = getCurrentPageFromUrl();
+  populateSalesStatusFilter();
+  bindSearch();
+  renderTable();
 }
 
 (async () => {

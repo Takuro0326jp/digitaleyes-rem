@@ -5,24 +5,27 @@
 <meta name="viewport" content="width=1300">
 <title>接客スケジュール | Real Estate Manager by DIGITALEYES</title>
 <link rel="stylesheet" href="common.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.17/index.global.min.css">
 <style>
-.week-nav { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.week-nav h2 { font-size: 16px; font-weight: 600; }
-.schedule-wrap { overflow-x: auto; }
-.schedule-table { width: 100%; border-collapse: collapse; min-width: 900px; }
-.schedule-table th { background: rgb(70,83,98); color: #fff; padding: 8px 10px; text-align: center; font-size: 13px; border: 1px solid rgb(90,103,118); }
-.schedule-table th.today-col { background: rgb(53,124,176); }
-.schedule-table td { border: 1px solid rgb(224,224,224); padding: 4px; vertical-align: top; min-height: 70px; height: 70px; width: 14%; }
-.schedule-table td.time-col { background: rgba(224,224,224,0.2); text-align: center; font-size: 11px; color: rgb(120,130,140); width: 60px; vertical-align: middle; }
-.schedule-table td.today-col { background: rgba(53,124,176,0.05); }
-.event-block { background: rgb(53,124,176); color: #fff; border-radius: 2px; padding: 2px 6px; font-size: 11px; margin-bottom: 2px; cursor: pointer; }
-.event-block:hover { background: rgb(40,100,150); }
-.event-block.visit { background: rgb(53,124,176); }
-.event-block.revisit { background: rgb(80,150,80); }
-.event-block.reserved { background: rgb(200,150,50); }
-.legend { display: flex; gap: 16px; margin-bottom: 12px; font-size: 12px; align-items: center; }
-.legend-item { display: flex; align-items: center; gap: 4px; }
-.legend-dot { width: 12px; height: 12px; border-radius: 2px; }
+.filter-bar2 { display:flex; gap:10px; align-items:end; flex-wrap:wrap; margin-bottom:12px; }
+.filter-item2 label { display:block; font-size:11px; color:rgb(120,130,140); margin-bottom:4px; }
+.filter-item2 input, .filter-item2 select { min-width:140px; padding:7px 9px; border:1px solid #ced4da; font-size:13px; font-family:inherit; color:rgb(70,83,98); }
+.fc-wrap { background:#fff; border:1px solid rgb(224,224,224); padding:8px; }
+.badge-pending { background:#f0f0f0; border:1px solid #ddd; color:#666; padding:1px 6px; border-radius:10px; font-size:10px; margin-left:6px; }
+.pill { display:inline-block; font-size:11px; border:1px solid rgb(224,224,224); padding:2px 8px; border-radius:12px; margin-right:6px; margin-top:4px; background:#fff; }
+.fc .fc-toolbar-title { font-size:20px; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000; display: none; align-items: center; justify-content: center; }
+.modal-box { background: #fff; width: 760px; box-shadow: 0 8px 40px rgba(0,0,0,0.2); }
+.modal-header { background: rgb(70,83,98); padding: 14px 20px; display:flex; align-items:center; justify-content:space-between; }
+.modal-header h3 { color:#fff; font-size:15px; font-weight:600; }
+.modal-close { background:none; border:none; color:#fff; font-size:20px; cursor:pointer; }
+.modal-body { padding: 18px 20px; }
+.modal-footer { padding: 12px 20px; border-top:1px solid rgb(224,224,224); display:flex; justify-content:flex-end; gap:8px; }
+.row { display:flex; gap:12px; flex-wrap:wrap; }
+.form-group { margin-bottom:12px; }
+.form-group label { display:block; font-size:12px; font-weight:600; color:rgb(70,83,98); margin-bottom:6px; }
+.form-group input, .form-group select, .form-group textarea { width:100%; padding:8px 10px; border:1px solid #ced4da; font-size:13px; font-family:inherit; color:rgb(70,83,98); }
+.err { color:#cc0000; font-size:12px; margin-top:5px; display:none; }
 </style>
 </head>
 <body>
@@ -32,145 +35,299 @@
   <main class="main">
     <div class="page-title-bar">
       <h1>接客スケジュール</h1>
+      <span id="dailyTotal" style="font-size:13px;color:rgb(120,130,140)"></span>
     </div>
-
-    <div class="week-nav">
-      <button class="btn" onclick="changeWeek(-1)">＜ 前週</button>
-      <h2 id="weekLabel"></h2>
-      <button class="btn" onclick="changeWeek(1)">次週 ＞</button>
-      <button class="btn" onclick="goToday()" style="margin-left:8px">今週</button>
+    <div class="filter-bar2">
+      <div class="filter-item2"><label>日付</label><input type="date" id="fDate"></div>
+      <div class="filter-item2"><label>担当者</label><select id="fStaff"><option value="">すべて</option></select></div>
+      <div class="filter-item2"><label>ステータス</label><input id="fStatusValues" placeholder="例: 2,3"></div>
+      <div class="filter-item2"><label>部屋名</label><select id="fRoom"><option value="">すべて</option></select></div>
+      <div class="filter-item2"><label>仮/確定</label><select id="fVF"><option value="">すべて</option><option value="pending">仮登録のみ</option><option value="confirmed">確定済みのみ</option></select></div>
+      <div class="filter-item2"><label>キーワード</label><input id="fKeyword" placeholder="顧客名・メール等"></div>
+      <div><button class="btn btn-primary-solid btn-sm" onclick="applyFilters()">適用</button><button class="btn btn-sm" onclick="clearFilters()" style="margin-left:6px">すべてクリア</button></div>
     </div>
-
-    <div class="legend">
-      <span class="legend-item"><span class="legend-dot" style="background:rgb(53,124,176)"></span>新規来場</span>
-      <span class="legend-item"><span class="legend-dot" style="background:rgb(80,150,80)"></span>再来場</span>
-      <span class="legend-item"><span class="legend-dot" style="background:rgb(200,150,50)"></span>来場予約</span>
-    </div>
-
-    <div id="tableArea"><div class="loading-spinner"></div></div>
+    <div id="activeFilters"></div>
+    <div class="fc-wrap"><div id="calendar"></div></div>
   </main>
 </div>
 </div>
 
+<div class="modal-overlay" id="editModal" onclick="closeModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="modalTitle">予約登録</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="evId">
+      <div class="row">
+        <div class="form-group" style="flex:1;min-width:160px"><label>日付 *</label><input id="mDate" type="date"></div>
+        <div class="form-group" style="flex:1;min-width:120px"><label>開始時刻 *</label><input id="mStart" type="time" step="900"></div>
+        <div class="form-group" style="flex:1;min-width:120px"><label>終了時刻 *</label><input id="mEnd" type="time" step="900"></div>
+        <div class="form-group" style="flex:1;min-width:140px"><label>部屋名</label><select id="mRoom"></select></div>
+      </div>
+      <div class="row">
+        <div class="form-group" style="flex:1;min-width:140px"><label>担当者</label><select id="mStaff"></select></div>
+        <div class="form-group" style="flex:1;min-width:140px"><label>参加人数</label><select id="mParticipants"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option value="6">6以上</option></select></div>
+        <div class="form-group" style="flex:1;min-width:160px"><label>打ち合わせ形式</label><select id="mType" onchange="onTypeChange()"><option value="visit">来店</option><option value="phone">電話</option><option value="web">WEBミーティング</option></select></div>
+        <div class="form-group" style="flex:1;min-width:160px"><label>接客状況</label><input id="mReception" placeholder="対応中 など"></div>
+      </div>
+      <div class="form-group" id="webUrlBlock" style="display:none"><label>WEB会議URL</label><input id="mWebUrl"></div>
+      <div class="row">
+        <div class="form-group" style="flex:1;min-width:180px"><label>顧客姓</label><input id="mSei"></div>
+        <div class="form-group" style="flex:1;min-width:180px"><label>顧客名</label><input id="mMei"></div>
+        <div class="form-group" style="flex:1;min-width:180px"><label>メール</label><input id="mEmail"></div>
+      </div>
+      <div class="row">
+        <div class="form-group" style="flex:1;min-width:180px"><label>電話</label><input id="mTel"></div>
+        <div class="form-group" style="flex:1;min-width:140px"><label>顧客ステータス(0-11)</label><input id="mCustomerStatus" type="number" min="0" max="11"></div>
+        <div class="form-group" style="flex:1;min-width:140px"><label>仮/確定</label><select id="mStatus"><option value="pending">仮登録</option><option value="confirmed">確定</option></select></div>
+      </div>
+      <div class="form-group"><label>メモ</label><textarea id="mMemo" rows="3"></textarea></div>
+      <div id="mErr" class="err"></div>
+    </div>
+    <div class="modal-footer" id="modalButtons"></div>
+  </div>
+</div>
+
 <script src="common.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar-scheduler@6.1.17/index.global.min.js"></script>
 <script>
-const DAYS = ["日","月","火","水","木","金","土"];
-const TIMES = ["10:00","11:00","12:00","13:00","14:00","15:00","16:00","17:00","18:00"];
-let weekOffset = 0;
+let calendar;
+let rooms = [];
+let users = [];
+let currentEvents = [];
+let scheduleSettings = { autoSlotMinutes: 60, dailyLimit: 20, bookingOpenDays: 30 };
 
-function getWeekDates(offset) {
-  const today = new Date();
-  const day = today.getDay();
-  const monday = new Date(today);
-  monday.setDate(today.getDate() - day + 1 + offset * 7);
-  const dates = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(monday);
-    d.setDate(monday.getDate() + i);
-    dates.push(d);
-  }
-  return dates;
+function colorByEvent(e) {
+  if (e.status === "pending") return "#b3b3b3";
+  const s = Number(e.customerStatus);
+  if ([2].includes(s)) return "#357cb0";
+  if ([3].includes(s)) return "#2e8b57";
+  if ([4,5,6].includes(s)) return "#2aa8a5";
+  if ([7,8].includes(s)) return "#d2852f";
+  if ([9,10].includes(s)) return "#7a4ab8";
+  if ([11].includes(s)) return "#cc3333";
+  return "#357cb0";
 }
-
-function fmt(d) { return `${d.getMonth()+1}/${d.getDate()}`; }
-function isToday(d) {
-  const t = new Date();
-  return d.getFullYear()===t.getFullYear() && d.getMonth()===t.getMonth() && d.getDate()===t.getDate();
+function roomResourceList() { return [{ id: "none", title: "未設定" }, ...rooms.map((r) => ({ id: String(r.id), title: r.name }))]; }
+function onTypeChange() { document.getElementById("webUrlBlock").style.display = document.getElementById("mType").value === "web" ? "block" : "none"; }
+function clearErr() { const el = document.getElementById("mErr"); el.style.display = "none"; el.textContent = ""; }
+function showErr(msg) { const el = document.getElementById("mErr"); el.style.display = "block"; el.textContent = msg; }
+function fillRoomAndStaffSelect() {
+  document.getElementById("fRoom").innerHTML = '<option value="">すべて</option><option value="none">未設定</option>' + rooms.map((r) => `<option value="${r.id}">${r.name}</option>`).join("");
+  document.getElementById("mRoom").innerHTML = '<option value="">未設定</option>' + rooms.map((r) => `<option value="${r.id}">${r.name}</option>`).join("");
+  const uopts = users.map((u) => `<option value="${u.id}">${u.name}</option>`).join("");
+  document.getElementById("fStaff").innerHTML = '<option value="">すべて</option>' + uopts;
+  document.getElementById("mStaff").innerHTML = '<option value="">未設定</option>' + uopts;
 }
-
-async function load() {
-  document.getElementById("tableArea").innerHTML = '<div class="loading-spinner"></div>';
-  const dates = getWeekDates(weekOffset);
-  const start = dates[0], end = dates[6];
-  const startStr = `${start.getFullYear()}-${String(start.getMonth()+1).padStart(2,'0')}-${String(start.getDate()).padStart(2,'0')}`;
-  const endStr = `${end.getFullYear()}-${String(end.getMonth()+1).padStart(2,'0')}-${String(end.getDate()).padStart(2,'0')}`;
-  document.getElementById("weekLabel").textContent = `${start.getFullYear()}年${fmt(start)} 〜 ${fmt(end)}`;
-
+function activeFilterTags() {
+  const tags = [];
+  [["fDate","日付"],["fStaff","担当者"],["fStatusValues","ステータス"],["fRoom","部屋"],["fVF","仮/確定"],["fKeyword","キーワード"]].forEach(([id,l]) => {
+    const v = document.getElementById(id).value;
+    if (v) tags.push(`<span class="pill">${l}: ${v} <a href="#" onclick="clearOneFilter('${id}');return false;" style="margin-left:6px;color:#666;text-decoration:none">×</a></span>`);
+  });
+  document.getElementById("activeFilters").innerHTML = tags.join("");
+}
+function clearOneFilter(id) { document.getElementById(id).value = ""; applyFilters(); }
+function buildQuery(info) {
+  const q = new URLSearchParams();
+  if (info?.startStr) q.set("start", info.startStr);
+  if (info?.endStr) q.set("end", info.endStr);
+  const date = document.getElementById("fDate").value;
+  if (date) { q.set("start", `${date}T00:00:00`); q.set("end", `${date}T23:59:59`); }
+  const roomId = document.getElementById("fRoom").value;
+  const staffId = document.getElementById("fStaff").value;
+  const vf = document.getElementById("fVF").value;
+  const keyword = document.getElementById("fKeyword").value.trim();
+  const statusValues = document.getElementById("fStatusValues").value.trim();
+  if (roomId) q.set("roomId", roomId);
+  if (staffId) q.set("staffId", staffId);
+  if (vf) q.set("vf", vf);
+  if (keyword) q.set("keyword", keyword);
+  if (statusValues) q.set("statusValues", statusValues);
+  return q.toString();
+}
+function recalcDailyTotal(dateStr) {
+  const day = dateStr.slice(0, 10);
+  const list = currentEvents.filter((e) => (e.date || "").slice(0, 10) === day);
+  const groups = list.length;
+  const people = list.reduce((a, b) => a + Number(b.participants || 0), 0);
+  document.getElementById("dailyTotal").textContent = `来場予定者合計: ${groups}組（${people}名）`;
+}
+function eventToFc(e) {
+  const title = `${(e.customerNameSei || "")}${(e.customerNameMei || "")}`.trim() || "未入力";
+  return { id: e.id, title, start: e.start, end: e.end, resourceId: e.roomId || "none", backgroundColor: colorByEvent(e), borderColor: colorByEvent(e), extendedProps: e };
+}
+async function fetchEvents(info, success, failure) {
   try {
-    const data = await apiCall({
-      limit: 100,
-      fields: JSON.stringify(["c.id","c.name","c.status","c.date_visit","c.rr_date","c.baitai"]),
-      conditions: JSON.stringify([{"c.date_visit >=": startStr, "c.date_visit <=": endStr}])
-    });
-    const customers = data.result || [];
-
-    // 日付→顧客マッピング
-    const dateMap = {};
-    dates.forEach(d => dateMap[d.toISOString().slice(0,10)] = []);
-    customers.forEach(c => {
-      const dv = c["c.date_visit"];
-      if (dv && dateMap[dv]) dateMap[dv].push(c);
-    });
-
-    let html = `<div class="schedule-wrap"><table class="schedule-table"><thead><tr>
-      <th style="width:60px">時間</th>
-      ${dates.map(d => `<th class="${isToday(d)?"today-col":""}">${DAYS[d.getDay()]} ${fmt(d)}</th>`).join("")}
-    </tr></thead><tbody>`;
-
-    TIMES.forEach(time => {
-      html += `<tr><td class="time-col">${time}</td>`;
-      dates.forEach(d => {
-        const key = d.toISOString().slice(0,10);
-        const events = (dateMap[key]||[]).filter(c => {
-          const rr = c["c.rr_date"]||"";
-          return rr.includes(time.replace(":",""));
-        });
-        html += `<td class="${isToday(d)?"today-col":""}">`;
-        events.forEach(c => {
-          const cls = c["c.status"]==="新規来場"?"visit":c["c.status"]==="再来場"?"revisit":"reserved";
-          html += `<div class="event-block ${cls}">${c["c.name"]||"来場予約"}</div>`;
-        });
-        html += `</td>`;
-      });
-      html += `</tr>`;
-    });
-
-    // 来場日あるが時間なし
-    html += `<tr><td class="time-col" style="font-size:10px">未定</td>`;
-    dates.forEach(d => {
-      const key = d.toISOString().slice(0,10);
-      const events = (dateMap[key]||[]).filter(c => !c["c.rr_date"]);
-      html += `<td class="${isToday(d)?"today-col":""}">`;
-      events.forEach(c => {
-        const cls = c["c.status"]==="新規来場"?"visit":c["c.status"]==="再来場"?"revisit":"reserved";
-        html += `<div class="event-block ${cls}">${c["c.name"]||"来場"}</div>`;
-      });
-      html += `</td>`;
-    });
-    html += `</tr></tbody></table></div>`;
-
-    // 週の来場者一覧
-    const allWeek = Object.values(dateMap).flat();
-    if (allWeek.length > 0) {
-      html += `<div style="margin-top:24px">
-        <div class="section-header"><h2 class="section-heading">今週の来場者一覧（${allWeek.length}件）</h2></div>
-        <table class="list-table"><thead><tr><th>来場日</th><th>顧客名</th><th>ステータス</th><th>反響媒体</th></tr></thead><tbody>
-        ${allWeek.map(c=>`<tr>
-          <td>${c["c.date_visit"]||""}</td>
-          <td style="font-weight:600"><a href="customer.html">${c["c.name"]||""}</a></td>
-          <td>${statusBadge(c["c.status"])}</td>
-          <td>${baitaiBadge(c["c.baitai"])}</td>
-        </tr>`).join("")}
-        </tbody></table>
-      </div>`;
-    } else {
-      html += `<div class="empty-msg" style="margin-top:16px">この週の来場予定はありません</div>`;
-    }
-
-    document.getElementById("tableArea").innerHTML = html;
-  } catch(e) {
-    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`;
-  }
+    activeFilterTags();
+    const q = buildQuery(info);
+    const res = await fetch(`${CONFIG.API_BASE}/schedule/events?${q}`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.message || "イベント取得に失敗しました");
+    currentEvents = data.events || [];
+    recalcDailyTotal(calendar.getDate().toISOString());
+    success(currentEvents.map(eventToFc));
+  } catch (e) { failure(e); }
 }
+function setModalButtons(status, isUpdate) {
+  const area = document.getElementById("modalButtons");
+  if (!isUpdate) { area.innerHTML = `<button class="btn btn-sm" onclick="closeModal()">キャンセル</button><button class="btn btn-primary-solid btn-sm" onclick="saveEvent(false)">登録する</button>`; return; }
+  if (status === "pending") { area.innerHTML = `<button class="btn btn-sm" onclick="closeModal()">キャンセル</button><button class="btn btn-sm" onclick="saveEvent(false)">仮登録のまま更新</button><button class="btn btn-primary-solid btn-sm" onclick="saveEvent(true)">確定する</button>`; return; }
+  area.innerHTML = `<button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="deleteEvent()">削除</button><button class="btn btn-sm" onclick="closeModal()">キャンセル</button><button class="btn btn-primary-solid btn-sm" onclick="saveEvent(false)">更新する</button>`;
+}
+function openModalWith(e) {
+  clearErr();
+  document.getElementById("evId").value = e.id || "";
+  document.getElementById("mDate").value = e.date || "";
+  document.getElementById("mStart").value = e.startTime || "10:00";
+  document.getElementById("mEnd").value = e.endTime || "11:00";
+  document.getElementById("mRoom").value = e.roomId || "";
+  document.getElementById("mStaff").value = e.staffId || "";
+  document.getElementById("mParticipants").value = String(e.participants || 1);
+  document.getElementById("mType").value = e.meetingType || "visit";
+  document.getElementById("mWebUrl").value = e.webMeetingUrl || "";
+  document.getElementById("mReception").value = e.receptionStatus || "";
+  document.getElementById("mSei").value = e.customerNameSei || "";
+  document.getElementById("mMei").value = e.customerNameMei || "";
+  document.getElementById("mEmail").value = e.customerEmail || "";
+  document.getElementById("mTel").value = e.customerTel || "";
+  document.getElementById("mCustomerStatus").value = e.customerStatus ?? "";
+  document.getElementById("mStatus").value = e.status || "pending";
+  document.getElementById("mMemo").value = e.memo || "";
+  onTypeChange();
+  document.getElementById("modalTitle").textContent = e.id ? "予約詳細・編集" : "予約登録";
+  setModalButtons(e.status || "pending", !!e.id);
+  document.getElementById("editModal").style.display = "flex";
+}
+function closeModal() { document.getElementById("editModal").style.display = "none"; }
+function payloadFromModal(forceConfirm) {
+  const status = forceConfirm ? "confirmed" : document.getElementById("mStatus").value;
+  return {
+    date: document.getElementById("mDate").value,
+    startTime: document.getElementById("mStart").value,
+    endTime: document.getElementById("mEnd").value,
+    roomId: document.getElementById("mRoom").value || null,
+    staffId: document.getElementById("mStaff").value || null,
+    participants: Number(document.getElementById("mParticipants").value || 1),
+    meetingType: document.getElementById("mType").value,
+    webMeetingUrl: document.getElementById("mWebUrl").value.trim(),
+    receptionStatus: document.getElementById("mReception").value.trim(),
+    customerNameSei: document.getElementById("mSei").value.trim(),
+    customerNameMei: document.getElementById("mMei").value.trim(),
+    customerEmail: document.getElementById("mEmail").value.trim(),
+    customerTel: document.getElementById("mTel").value.trim(),
+    customerStatus: document.getElementById("mCustomerStatus").value,
+    memo: document.getElementById("mMemo").value.trim(),
+    status,
+    source: "manual",
+  };
+}
+async function saveEvent(forceConfirm) {
+  clearErr();
+  const id = document.getElementById("evId").value;
+  const payload = payloadFromModal(forceConfirm);
+  if (!payload.date || !payload.startTime || !payload.endTime) return showErr("日付・開始時刻・終了時刻は必須です");
+  if (payload.endTime <= payload.startTime) return showErr("終了時刻は開始時刻より後にしてください");
+  const url = id ? `${CONFIG.API_BASE}/schedule/events/${encodeURIComponent(id)}` : `${CONFIG.API_BASE}/schedule/events`;
+  const method = id ? "PUT" : "POST";
+  const res = await fetch(url, { method, headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  const d = await res.json();
+  if (!d.ok) return showErr(d.message || "保存に失敗しました");
+  if (d.warning) alert(d.warning);
+  closeModal();
+  calendar.refetchEvents();
+}
+async function deleteEvent() {
+  const id = document.getElementById("evId").value;
+  if (!id) return;
+  const res = await fetch(`${CONFIG.API_BASE}/schedule/events/${encodeURIComponent(id)}`, { method: "DELETE", headers: { Authorization: `Bearer ${Auth.getToken()}` } });
+  const d = await res.json();
+  if (!d.ok) return showErr(d.message || "削除に失敗しました");
+  closeModal();
+  calendar.refetchEvents();
+}
+function slotEnd(startDate) { const e = new Date(startDate.getTime()); e.setMinutes(e.getMinutes() + Number(scheduleSettings.autoSlotMinutes || 60)); return e; }
+function applyFilters() { calendar.refetchEvents(); }
+function clearFilters() { ["fDate","fStaff","fStatusValues","fRoom","fVF","fKeyword"].forEach((id)=>{document.getElementById(id).value="";}); applyFilters(); }
 
-function changeWeek(d) { weekOffset += d; load(); }
-function goToday() { weekOffset = 0; load(); }
+async function initSchedule() {
+  const [rRes, uRes, sRes] = await Promise.all([
+    fetch(`${CONFIG.API_BASE}/schedule/rooms`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } }),
+    fetch(`${CONFIG.API_BASE}/user/accounts`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } }),
+    fetch(`${CONFIG.API_BASE}/schedule/settings`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } }),
+  ]);
+  const rData = await rRes.json();
+  const uData = await uRes.json();
+  const sData = await sRes.json();
+  if (!rData.ok) throw new Error(rData.message || "部屋取得に失敗しました");
+  if (!uData.ok) throw new Error(uData.message || "担当者取得に失敗しました");
+  rooms = rData.rooms || [];
+  users = uData.accounts || [];
+  if (sData.ok && sData.settings) scheduleSettings = sData.settings;
+  fillRoomAndStaffSelect();
+
+  calendar = new FullCalendar.Calendar(document.getElementById("calendar"), {
+    schedulerLicenseKey: "GPL-My-Project-Is-Open-Source",
+    locale: "ja",
+    initialView: "resourceTimeGridDay",
+    resourceAreaHeaderContent: "部屋",
+    resources: roomResourceList(),
+    slotDuration: "00:15:00",
+    slotMinTime: "09:00:00",
+    slotMaxTime: "20:00:00",
+    selectable: true,
+    nowIndicator: true,
+    headerToolbar: { left: "prev,next todayBtn", center: "title", right: "resourceTimeGridDay,timeGridWeek,dayGridMonth" },
+    customButtons: { todayBtn: { text: "今日", click() { calendar.today(); recalcDailyTotal(new Date().toISOString()); } } },
+    datesSet(info) { if (calendar.view.type === "resourceTimeGridDay") recalcDailyTotal(info.startStr); },
+    events: fetchEvents,
+    eventContent(arg) {
+      const e = arg.event.extendedProps;
+      const nm = `${e.customerNameSei || ""}${e.customerNameMei || ""}`.trim() || "未入力";
+      const staff = users.find((u) => String(u.id) === String(e.staffId || ""))?.name || "未設定";
+      return { html: `<div style="font-size:11px;line-height:1.35"><div style="font-weight:700">${nm}${e.status==="pending"?'<span class="badge-pending">仮</span>':""}</div><div>${e.participants||1}名 / ${staff}</div></div>` };
+    },
+    dateClick(arg) {
+      if (calendar.view.type === "dayGridMonth") { calendar.changeView("resourceTimeGridDay", arg.dateStr); return; }
+      const s = arg.date;
+      const e = slotEnd(s);
+      openModalWith({
+        date: arg.dateStr.slice(0, 10),
+        startTime: `${String(s.getHours()).padStart(2, "0")}:${String(s.getMinutes()).padStart(2, "0")}`,
+        endTime: `${String(e.getHours()).padStart(2, "0")}:${String(e.getMinutes()).padStart(2, "0")}`,
+        roomId: arg.resource?.id && arg.resource.id !== "none" ? arg.resource.id : null,
+        status: "pending",
+      });
+    },
+    dayCellDidMount(arg) {
+      if (calendar.view.type !== "dayGridMonth") return;
+      const ymd = arg.date.toISOString().slice(0, 10);
+      const list = currentEvents.filter((e) => (e.date || "").slice(0, 10) === ymd);
+      if (!list.length) return;
+      const wrap = document.createElement("div");
+      wrap.style.marginTop = "2px";
+      const confirmed = list.some((x) => x.status === "confirmed");
+      const bg = confirmed ? "#e8f2ff" : "#f2f2f2";
+      const names = list.slice(0, 2).map((x) => `${x.customerNameSei || ""}${x.customerNameMei || ""}`.trim() || "未入力");
+      wrap.innerHTML = `<div style="display:inline-block;padding:1px 6px;border-radius:10px;background:${bg};font-size:10px;margin-bottom:2px">${list.length}件</div>
+        ${names.map((n)=>`<div style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:${bg};border-radius:8px;padding:0 5px;margin-top:1px">${n}</div>`).join("")}
+        ${list.length > 2 ? `<div style="font-size:10px;color:#666">+${list.length - 2}件</div>` : ""}`;
+      arg.el.appendChild(wrap);
+    },
+    eventClick(arg) { openModalWith(arg.event.extendedProps); },
+  });
+  calendar.render();
+}
 
 (async () => {
   if (!await requireAuth()) return;
   document.getElementById("header").innerHTML = renderHeader("schedule.html");
-  load();
+  try { await initSchedule(); }
+  catch (e) { document.getElementById("calendar").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`; }
 })();
 </script>
 </body>
 </html>
+

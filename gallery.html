@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1300">
+<title>素材ギャラリー | Real Estate Manager by DIGITALEYES</title>
+<link rel="stylesheet" href="common.css">
+<style>
+.gallery-layout{display:grid;grid-template-columns:250px 1fr;gap:12px}
+.panel{background:#fff;border:1px solid rgb(224,224,224);padding:10px}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+.toolbar input,.toolbar select{padding:7px 9px;border:1px solid #ced4da;font-family:inherit}
+.asset-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.asset-card{border:1px solid rgb(224,224,224);background:#fff;position:relative;cursor:pointer}
+.asset-thumb{height:130px;background:#f4f6f8;display:flex;align-items:center;justify-content:center;overflow:hidden}
+.asset-thumb img{width:100%;height:100%;object-fit:cover}
+.asset-body{padding:8px}
+.asset-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.asset-meta{font-size:11px;color:rgb(120,130,140);margin-top:4px}
+.badge{position:absolute;top:6px;right:6px;padding:2px 8px;border-radius:10px;color:#fff;font-size:11px}
+.b-active{background:#2e7d32}.b-archived{background:#c28200}
+.chk{position:absolute;top:8px;left:8px}
+.bulkbar{display:none;gap:8px;align-items:center;background:#eef6ff;border:1px solid #cddff4;padding:8px 10px;margin-bottom:8px}
+.master-row{display:flex;gap:6px;align-items:center;margin-top:6px}
+.master-row input{flex:1;padding:6px 8px;border:1px solid #ced4da}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:440px;background:#fff;box-shadow:-10px 0 30px rgba(0,0,0,.2);z-index:1200;display:none;overflow:auto}
+.drawer.open{display:block}
+.drawer-head{background:rgb(70,83,98);color:#fff;padding:12px 14px;display:flex;justify-content:space-between}
+.drawer-body{padding:12px}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:1100}
+.modal-box{width:620px;background:#fff}
+.modal-head{background:rgb(70,83,98);color:#fff;padding:12px 14px;display:flex;justify-content:space-between}
+.modal-body{padding:12px}
+.dropzone{border:2px dashed #9bb2c8;padding:24px;text-align:center;color:#5c6f83}
+</style>
+</head>
+<body>
+<div id="wrapper"><div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="page-title-bar"><h1>素材ギャラリー</h1></div>
+    <div class="bulkbar" id="bulkbar">
+      <span id="bulkCount">0件選択中</span>
+      <button class="btn btn-sm" onclick="bulkDelete()">削除</button>
+      <button class="btn btn-sm" onclick="clearSelection()">解除</button>
+    </div>
+    <div class="gallery-layout">
+      <aside class="panel">
+        <div style="font-weight:700;margin-bottom:6px">種別</div>
+        <select id="fType" style="width:100%" onchange="loadAssets()"></select>
+        <div style="margin-top:12px">
+          <button class="btn btn-sm" onclick="openTypeMasterModal()">種別マスター設定</button>
+        </div>
+      </aside>
+      <section class="panel">
+        <div class="toolbar">
+          <input id="q" placeholder="名前・タグ検索" style="min-width:260px" onkeydown="if(event.key==='Enter')loadAssets()">
+          <button class="btn btn-sm" onclick="loadAssets()">検索</button>
+          <button class="btn btn-primary-solid btn-sm" style="margin-left:auto" onclick="openUpload()">↑ アップロード</button>
+        </div>
+        <div id="gallery"><div class="loading-spinner"></div></div>
+      </section>
+    </div>
+  </main>
+</div></div>
+
+<div class="drawer" id="drawer">
+  <div class="drawer-head"><strong>素材詳細</strong><button class="btn btn-sm" onclick="closeDrawer()">✕</button></div>
+  <div class="drawer-body" id="drawerBody"></div>
+</div>
+
+<div class="modal-overlay" id="uploadModal">
+  <div class="modal-box">
+    <div class="modal-head"><strong>素材アップロード</strong><button class="btn btn-sm" onclick="closeUpload()">✕</button></div>
+    <div class="modal-body">
+      <div class="dropzone">
+        <input id="upFiles" type="file" multiple>
+      </div>
+      <div style="font-size:12px;color:rgb(120,130,140);margin-top:6px">1ファイルあたり最大 5GB までアップロードできます。</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+        <div><label>種別</label><select id="upType" style="width:100%"></select></div>
+      </div>
+      <div style="margin-top:8px"><label>タグ（カンマ区切り）</label><input id="upTags" style="width:100%;padding:7px 9px;border:1px solid #ced4da"></div>
+      <div style="margin-top:8px"><label>メモ</label><textarea id="upMemo" rows="3" style="width:100%;padding:7px 9px;border:1px solid #ced4da"></textarea></div>
+      <div style="margin-top:10px;display:flex;justify-content:flex-end;gap:8px"><button class="btn btn-sm" onclick="closeUpload()">キャンセル</button><button class="btn btn-primary-solid btn-sm" onclick="uploadAssets()">アップロード開始</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="typeMasterModal">
+  <div class="modal-box" style="width:560px">
+    <div class="modal-head"><strong>種別マスター管理</strong><button class="btn btn-sm" onclick="closeTypeMasterModal()">✕</button></div>
+    <div class="modal-body">
+      <div class="master-row">
+        <input id="newTypeKey" placeholder="キー 例: flyer">
+      </div>
+      <div class="master-row">
+        <input id="newTypeLabel" placeholder="表示名 例: チラシ">
+        <button class="btn btn-sm" onclick="addTypeMaster()">追加</button>
+      </div>
+      <div id="typeMasterList" style="margin-top:8px;max-height:300px;overflow:auto"></div>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+let assets = [];
+let selected = new Set();
+let typeMaster = [];
+
+function fmtSize(n){ const x=Number(n||0); if(x>1024*1024)return `${(x/1024/1024).toFixed(1)}MB`; if(x>1024)return `${(x/1024).toFixed(1)}KB`; return `${x}B`; }
+function assetTypeLabel(v){ const f = typeMaster.find((x)=>x.typeKey===v); return f ? f.label : (v||"その他"); }
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+async function loadTypeMaster(){
+  const res = await fetch(`${CONFIG.API_BASE}/media-asset-types`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
+  const d = await res.json();
+  if(!res.ok || !d.ok){ typeMaster = []; return; }
+  typeMaster = d.types || [];
+  const opts = [`<option value="">すべて</option>`, ...typeMaster.map((t)=>`<option value="${t.typeKey}">${t.label}</option>`)];
+  document.getElementById("fType").innerHTML = opts.join("");
+  document.getElementById("upType").innerHTML = typeMaster.map((t)=>`<option value="${t.typeKey}">${t.label}</option>`).join("");
+  document.getElementById("typeMasterList").innerHTML = typeMaster.map((t)=>`<div class="master-row"><span style="flex:1;font-size:12px">${esc(t.label)} <span style="color:#9aa6b2">(${esc(t.typeKey)})</span></span><button class="btn btn-sm" onclick="deleteTypeMaster('${esc(t.typeKey)}')">削除</button></div>`).join("");
+}
+function openTypeMasterModal(){ document.getElementById("typeMasterModal").style.display = "flex"; }
+function closeTypeMasterModal(){ document.getElementById("typeMasterModal").style.display = "none"; }
+async function addTypeMaster(){
+  const typeKey = document.getElementById("newTypeKey").value.trim();
+  const label = document.getElementById("newTypeLabel").value.trim();
+  if(!typeKey || !label){ alert("キーと表示名を入力してください"); return; }
+  const res = await fetch(`${CONFIG.API_BASE}/media-asset-types`, { method:"POST", headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" }, body: JSON.stringify({ typeKey, label }) });
+  const d = await res.json();
+  if(!res.ok || !d.ok){ alert(d.message || "追加に失敗しました"); return; }
+  document.getElementById("newTypeKey").value = "";
+  document.getElementById("newTypeLabel").value = "";
+  await loadTypeMaster();
+}
+async function deleteTypeMaster(typeKey){
+  if(!confirm(`種別 ${typeKey} を削除しますか？`)) return;
+  const res = await fetch(`${CONFIG.API_BASE}/media-asset-types/${encodeURIComponent(typeKey)}`, { method:"DELETE", headers:{ Authorization:`Bearer ${Auth.getToken()}` } });
+  const d = await res.json();
+  if(!res.ok || !d.ok){ alert(d.message || "削除に失敗しました"); return; }
+  await loadTypeMaster();
+}
+
+function updateBulkbar(){
+  const n = selected.size;
+  const bar = document.getElementById("bulkbar");
+  bar.style.display = n ? "flex" : "none";
+  document.getElementById("bulkCount").textContent = `${n}件選択中`;
+}
+
+async function loadAssets(){
+  const q = new URLSearchParams();
+  const assetType = document.getElementById("fType").value;
+  const search = document.getElementById("q").value.trim();
+  if(assetType) q.set("assetType", assetType);
+  if(search) q.set("search", search);
+  const res = await fetch(`${CONFIG.API_BASE}/media-assets?${q.toString()}`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
+  const d = await res.json();
+  if(!res.ok || !d.ok){ document.getElementById("gallery").innerHTML = `<div class="error-box">⚠️ ${d.message||"取得失敗"}</div>`; return; }
+  assets = d.data || [];
+  renderAssets();
+}
+
+function renderAssets(){
+  const root = document.getElementById("gallery");
+  if(!assets.length){ root.innerHTML = `<div class="empty-msg">素材がありません</div>`; return; }
+  root.innerHTML = `<div class="asset-grid">${assets.map((a)=>{
+    const isImg = String(a.mimeType||"").startsWith("image/");
+    return `<div class="asset-card" onclick="openAsset('${a.id}')">
+      <input class="chk" type="checkbox" ${selected.has(a.id)?"checked":""} onclick="event.stopPropagation();toggleSel('${a.id}',this.checked)">
+      <div class="asset-thumb">${isImg?`<img src="${a.thumbnailUrl||a.fileUrl}" alt="">`:`<div>📄</div>`}</div>
+      <div class="asset-body">
+        <div class="asset-name" title="${a.name}">${a.name}</div>
+        <div class="asset-meta">${assetTypeLabel(a.assetType)} / ${fmtSize(a.fileSize)}</div>
+      </div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function toggleSel(id, checked){ if(checked) selected.add(id); else selected.delete(id); updateBulkbar(); }
+function clearSelection(){ selected.clear(); renderAssets(); updateBulkbar(); }
+
+async function openAsset(id){
+  const a = assets.find((x)=>x.id===id); if(!a) return;
+  const isImg = String(a.mimeType||"").startsWith("image/");
+  document.getElementById("drawerBody").innerHTML = `
+    <div style="margin-bottom:10px">${isImg?`<img src="${a.fileUrl}" style="width:100%;max-height:220px;object-fit:contain;background:#f5f5f5">`:`<a class="btn btn-sm" href="${a.fileUrl}" target="_blank">プレビューを開く</a>`}</div>
+    <div><label>ファイル名</label><input id="dName" value="${a.name}" style="width:100%;padding:7px 9px;border:1px solid #ced4da"></div>
+    <div style="margin-top:8px"><label>タグ</label><input id="dTags" value="${(a.tags||[]).join(",")}" style="width:100%;padding:7px 9px;border:1px solid #ced4da"></div>
+    <div style="margin-top:8px"><label>メモ</label><textarea id="dMemo" rows="3" style="width:100%;padding:7px 9px;border:1px solid #ced4da">${a.memo||""}</textarea></div>
+    <div style="font-size:12px;color:#73808d;margin-top:8px">種別: ${assetTypeLabel(a.assetType)} / サイズ: ${fmtSize(a.fileSize)}</div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <a class="btn btn-sm" href="${a.fileUrl}" download="${a.name}">ダウンロード</a>
+      <button class="btn btn-primary-solid btn-sm" onclick="saveAsset('${a.id}')">保存</button>
+      <button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="deleteAsset('${a.id}')">削除</button>
+    </div>`;
+  document.getElementById("drawer").classList.add("open");
+}
+function closeDrawer(){ document.getElementById("drawer").classList.remove("open"); }
+
+async function saveAsset(id){
+  const body = { name: document.getElementById("dName").value.trim(), tags: document.getElementById("dTags").value, memo: document.getElementById("dMemo").value };
+  const res = await fetch(`${CONFIG.API_BASE}/media-assets/${encodeURIComponent(id)}`, { method:"PATCH", headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" }, body: JSON.stringify(body) });
+  const d = await res.json();
+  if(!res.ok || !d.ok){ alert(d.message||"保存失敗"); return; }
+  alert("保存しました");
+  await loadAssets();
+  closeDrawer();
+}
+
+async function deleteAsset(id){
+  if(!confirm("削除しますか？")) return;
+  const res = await fetch(`${CONFIG.API_BASE}/media-assets/${encodeURIComponent(id)}`, { method:"DELETE", headers:{ Authorization:`Bearer ${Auth.getToken()}` } });
+  const d = await res.json();
+  if(!res.ok || !d.ok){ alert(d.message||"削除失敗"); return; }
+  await loadAssets();
+  closeDrawer();
+}
+
+function openUpload(){ document.getElementById("uploadModal").style.display = "flex"; }
+function closeUpload(){ document.getElementById("uploadModal").style.display = "none"; }
+
+async function uploadAssets(){
+  const input = document.getElementById("upFiles");
+  const files = [...(input.files||[])];
+  if(!files.length){ alert("ファイルを選択してください"); return; }
+  const assetType = document.getElementById("upType").value;
+  const tags = document.getElementById("upTags").value;
+  const memo = document.getElementById("upMemo").value;
+  for(const f of files){
+    const preRes = await fetch(`${CONFIG.API_BASE}/media-assets/presigned-url`, {
+      method:"POST",
+      headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
+      body: JSON.stringify({
+        fileName: f.name,
+        mimeType: f.type || "application/octet-stream",
+        fileSize: f.size || 0,
+        assetType,
+      })
+    });
+    const pre = await preRes.json();
+    if(!preRes.ok || !pre.ok){ alert(pre.message||"署名付きURL取得失敗"); return; }
+    const putRes = await fetch(pre.presignedUrl, {
+      method:"PUT",
+      headers:{ "Content-Type": f.type || "application/octet-stream" },
+      body: f,
+    });
+    if(!putRes.ok){ alert("S3アップロードに失敗しました"); return; }
+    const cfRes = await fetch(`${CONFIG.API_BASE}/media-assets/confirm-upload`, {
+      method:"POST",
+      headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
+      body: JSON.stringify({
+        key: pre.key,
+        fileName: f.name,
+        mimeType: f.type || "application/octet-stream",
+        fileSize: f.size || 0,
+        assetType,
+        tags,
+        memo,
+      })
+    });
+    const cf = await cfRes.json();
+    if(!cfRes.ok || !cf.ok){ alert(cf.message||"アップロード完了処理失敗"); return; }
+  }
+  input.value = ""; document.getElementById("upTags").value=""; document.getElementById("upMemo").value="";
+  closeUpload();
+  await loadAssets();
+}
+
+async function bulkDelete(){
+  if(!selected.size) return;
+  if(!confirm(`${selected.size}件を削除しますか？`)) return;
+  for(const id of [...selected]){
+    await fetch(`${CONFIG.API_BASE}/media-assets/${encodeURIComponent(id)}`, { method:"DELETE", headers:{ Authorization:`Bearer ${Auth.getToken()}` } });
+  }
+  clearSelection();
+  await loadAssets();
+}
+
+(async()=>{
+  if(!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("gallery.html");
+  await loadTypeMaster();
+  await loadAssets();
+})();
+</script>
+</body>
+</html>
+

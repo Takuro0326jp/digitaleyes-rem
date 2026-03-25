@@ -6,6 +6,10 @@
     "vercel-build": "echo 'static + api'"
   },
   "dependencies": {
-    "@libsql/client": "^0.17.2"
+    "@aws-sdk/client-s3": "^3.883.0",
+    "@aws-sdk/s3-request-presigner": "^3.1016.0",
+    "@libsql/client": "^0.17.2",
+    "exceljs": "^4.4.0",
+    "nodemailer": "^8.0.4"
   }
 }

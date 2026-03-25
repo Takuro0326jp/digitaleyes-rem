@@ -10,9 +10,23 @@
   },
   "rewrites": [
     { "source": "/auth/:path*", "destination": "/api/handler?__r=/auth/:path*" },
+    { "source": "/customer/map", "destination": "/api/handler?__r=/customer/map" },
+    { "source": "/gallery", "destination": "/api/handler?__r=/gallery" },
+    { "source": "/gallery/:path*", "destination": "/api/handler?__r=/gallery/:path*" },
     { "source": "/user/:path*", "destination": "/api/handler?__r=/user/:path*" },
+    { "source": "/media-assets", "destination": "/api/handler?__r=/media-assets" },
+    { "source": "/media-assets/:path*", "destination": "/api/handler?__r=/media-assets/:path*" },
+    { "source": "/media-asset-types", "destination": "/api/handler?__r=/media-asset-types" },
+    { "source": "/media-asset-types/:path*", "destination": "/api/handler?__r=/media-asset-types/:path*" },
     { "source": "/local/:path*", "destination": "/api/handler?__r=/local/:path*" },
+    { "source": "/schedule/rooms", "destination": "/api/handler?__r=/schedule/rooms" },
+    { "source": "/schedule/settings", "destination": "/api/handler?__r=/schedule/settings" },
+    { "source": "/schedule/events", "destination": "/api/handler?__r=/schedule/events" },
+    { "source": "/schedule/events/:id", "destination": "/api/handler?__r=/schedule/events/:id" },
+    { "source": "/schedule/intake", "destination": "/api/handler?__r=/schedule/intake" },
+    { "source": "/api/properties/:path*", "destination": "/api/handler?__r=/api/properties/:path*" },
     { "source": "/sync/:path*", "destination": "/api/handler?__r=/sync/:path*" },
+    { "source": "/client/:path*", "destination": "/api/handler?__r=/client/:path*" },
     { "source": "/api/v1/:path*", "destination": "/api/handler?__r=/api/v1/:path*" }
   ]
 }

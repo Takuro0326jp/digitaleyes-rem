@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=1300">
-<title>広告管理 | Real Estate Manager by DIGITALEYES</title>
+<title>ポータル反響 | Real Estate Manager by DIGITALEYES</title>
 <link rel="stylesheet" href="common.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
@@ -13,6 +13,16 @@
 .media-num small { font-size: 12px; color: rgb(70,83,98); font-weight: 400; }
 .media-sub { font-size: 11px; color: rgb(120,130,140); margin-top: 4px; }
 .media-grid { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 24px; }
+.rank-grid { display:grid; grid-template-columns: repeat(3, minmax(240px, 1fr)); gap:10px; margin-bottom: 18px; }
+.rank-card { border:1px solid rgb(224,224,224); border-radius: 6px; padding: 10px; background:#fff; }
+.rank-card h4 { font-size:13px; margin-bottom:8px; color:rgb(70,83,98); }
+.rank-list { list-style:none; margin:0; padding:0; }
+.rank-list li { display:grid; grid-template-columns: 20px 1fr auto; gap:8px; align-items:start; padding:7px 0; border-bottom:1px solid #f1f1f1; font-size:12px; }
+.rank-list li:last-child { border-bottom:none; }
+.rank-no { width:20px; color:rgb(120,130,140); font-weight:700; }
+.rank-name { font-weight:600; color:rgb(70,83,98); line-height:1.25; }
+.rank-main { color:rgb(53,124,176); font-weight:700; white-space:nowrap; }
+.rank-sub { grid-column:2 / 4; color:rgb(120,130,140); font-size:11px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 </style>
 </head>
 <body>
@@ -20,7 +30,7 @@
 <div id="page-wrapper">
   <header class="header" id="header"></header>
   <main class="main">
-    <div class="page-title-bar"><h1>広告管理</h1></div>
+    <div class="page-title-bar"><h1>ポータル反響</h1></div>
     <div id="content"><div class="loading-spinner"></div></div>
   </main>
 </div>
@@ -57,7 +67,41 @@ async function load() {
       months.push({ label: `${d.getMonth()+1}月`, key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` });
     }
 
+    const rankingRows = MEDIAS
+      .map((m) => {
+        const d = mediaCounts[m];
+        const hankyoRate = total > 0 ? (d.total / total * 100) : 0;
+        const visitRate = d.total > 0 ? (d.visited / d.total * 100) : 0;
+        const contractRate = d.visited > 0 ? (d.contracted / d.visited * 100) : 0;
+        return { media: m, ...d, hankyoRate, visitRate, contractRate };
+      })
+      .filter((x) => x.total > 0);
+
+    const renderRank = (title, sortKey, mainLabel) => `
+      <div class="rank-card">
+        <h4>${title}</h4>
+        <ul class="rank-list">
+          ${(rankingRows.slice().sort((a,b)=>b[sortKey]-a[sortKey]).slice(0,5).map((r, i) => `
+            <li>
+              <span class="rank-no">${i+1}</span>
+              <span class="rank-name">${r.media}</span>
+              <span class="rank-main">${r[sortKey]}件</span>
+              <span class="rank-sub">${mainLabel}${r.hankyoRate.toFixed(1)}% / 来場率${r.visitRate.toFixed(1)}% / 成約率${r.contractRate.toFixed(1)}%</span>
+            </li>
+          `).join(""))}
+        </ul>
+      </div>`;
+
     document.getElementById("content").innerHTML = `
+      <section class="section">
+        <div class="section-header"><h2 class="section-heading">ランキング</h2></div>
+        <div class="rank-grid">
+          ${renderRank("反響数ランキング", "total", "反響率")}
+          ${renderRank("来場数ランキング", "visited", "反響率")}
+          ${renderRank("成約数ランキング", "contracted", "反響率")}
+        </div>
+      </section>
+
       <!-- 媒体別カード -->
       <section class="section">
         <div class="section-header"><h2 class="section-heading">媒体別反響状況</h2></div>

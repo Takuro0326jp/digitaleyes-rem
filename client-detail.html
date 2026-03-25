@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1300">
+  <title>クライアント詳細 | Real Estate Manager by DIGITALEYES</title>
+  <link rel="stylesheet" href="common.css">
+  <style>
+    .crumb { font-size:12px; color:rgb(120,130,140); margin: 14px 0 6px; }
+    .crumb a { color:rgb(53,124,176); }
+    .panel { background:#fff; border:1px solid rgb(224,224,224); padding:16px 18px; max-width:900px; }
+    .grid { display:grid; grid-template-columns: 200px 1fr; gap:10px 14px; }
+    .grid dt { font-weight:700; }
+    .grid dd { margin:0; }
+    .s3-form { display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-top:12px; }
+    .fg label { display:block; font-size:12px; font-weight:700; margin-bottom:6px; }
+    .fg input, .fg select { width:100%; padding:8px 10px; border:1px solid #ced4da; font-family:inherit; }
+  </style>
+</head>
+<body>
+<div id="wrapper">
+<div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="crumb"><a href="dashboard.html">ダッシュボード</a> ＞ <a href="client.html">クライアント一覧</a> ＞ クライアント詳細</div>
+    <div class="page-title-bar">
+      <h1 id="title">クライアント詳細</h1>
+      <div style="display:flex;gap:8px">
+        <a class="btn btn-sm" id="btnEdit" href="#">編集</a>
+        <a class="btn btn-sm" href="client.html">一覧へ戻る</a>
+      </div>
+    </div>
+
+    <div id="content"><div class="loading-spinner"></div></div>
+  </main>
+</div>
+</div>
+
+<script src="common.js"></script>
+<script>
+function dash(v){ return v==null || String(v).trim()==="" ? "―" : String(v); }
+function siteLabel(v){ return Number(v)===1 ? "日鉄" : "デフォルト"; }
+function idFromPath(){
+  const m = location.pathname.match(/\/client\/detail\/(\d+)/);
+  if (m) return m[1];
+  return new URLSearchParams(location.search).get("id");
+}
+
+async function toggleS3Form() {
+  const el = document.getElementById("s3Block");
+  el.style.display = el.style.display === "none" ? "block" : "none";
+}
+
+async function testS3(id) {
+  const payload = readS3Payload();
+  const res = await fetch(`${CONFIG.API_BASE}/client/s3/test/${encodeURIComponent(id)}`, {
+    method:"POST",
+    headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
+    body: JSON.stringify(payload),
+  });
+  const d = await res.json();
+  alert(d.ok ? (d.message || "成功") : (d.message || "失敗"));
+}
+
+function readS3Payload() {
+  return {
+    isEnabled: Number(document.getElementById("s3Enabled").value),
+    awsKey: document.getElementById("awsKey").value.trim(),
+    awsSecretKey: document.getElementById("awsSecret").value.trim(),
+    bucketName: document.getElementById("bucket").value.trim(),
+    region: document.getElementById("region").value.trim(),
+    syncHour: Number(document.getElementById("syncHour").value),
+    syncMinute: Number(document.getElementById("syncMinute").value),
+  };
+}
+
+async function saveS3(id) {
+  const payload = readS3Payload();
+  const res = await fetch(`${CONFIG.API_BASE}/client/s3/save/${encodeURIComponent(id)}`, {
+    method:"POST",
+    headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
+    body: JSON.stringify(payload),
+  });
+  const d = await res.json();
+  if (!d.ok) { alert(d.message || "保存に失敗しました"); return; }
+  alert("保存しました");
+  await load();
+}
+
+async function load() {
+  const id = idFromPath();
+  if (!id) { document.getElementById("content").innerHTML = '<div class="error-box">⚠️ IDが不正です</div>'; return; }
+  document.getElementById("btnEdit").href = `/client/edit/${id}`;
+  const res = await fetch(`${CONFIG.API_BASE}/client/api/detail?id=${encodeURIComponent(id)}`, { headers:{ Authorization:`Bearer ${Auth.getToken()}` } });
+  const d = await res.json();
+  if (!d.ok) { document.getElementById("content").innerHTML = `<div class="error-box">⚠️ ${d.message || "取得に失敗しました"}</div>`; return; }
+  const c = d.client;
+  const s3 = d.s3 || {};
+  document.getElementById("title").textContent = c.name || "クライアント詳細";
+  const hours = Array.from({length:24},(_,i)=>String(i).padStart(2,"0"));
+  const mins = Array.from({length:60},(_,i)=>String(i).padStart(2,"0"));
+  document.getElementById("content").innerHTML = `
+    <div class="panel">
+      <dl class="grid">
+        <dt>企業名</dt><dd>${dash(c.name)}</dd>
+        <dt>フリガナ</dt><dd>${dash(c.nameKana)}</dd>
+        <dt>E-mail</dt><dd>${dash(c.email)}</dd>
+        <dt>サイトタイプ</dt><dd>${siteLabel(c.siteType)}</dd>
+      </dl>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div style="font-weight:800">物件情報・顧客情報S3連携</div>
+        <button class="btn btn-sm" onclick="toggleS3Form()">編集</button>
+      </div>
+      <div style="margin-top:10px;color:rgb(120,130,140)">S3連携: <b>${Number(s3.isEnabled)===1?"する":"しない"}</b></div>
+      <div id="s3Block" style="display:none">
+        <div class="s3-form">
+          <div class="fg"><label>S3連携</label><select id="s3Enabled"><option value="0">しない</option><option value="1">する</option></select></div>
+          <div class="fg"><label>リージョン</label><input id="region" placeholder="ap-northeast-1"></div>
+          <div class="fg"><label>AWSキー</label><input id="awsKey"></div>
+          <div class="fg"><label>パケット名</label><input id="bucket" placeholder="bucket-name"></div>
+          <div class="fg"><label>連携時刻（時）</label><select id="syncHour">${hours.map(h=>`<option value="${Number(h)}">${h}</option>`).join("")}</select></div>
+          <div class="fg"><label>連携時刻（分）</label><select id="syncMinute">${mins.map(m=>`<option value="${Number(m)}">${m}</option>`).join("")}</select></div>
+          <div class="fg" style="grid-column:1/-1"><label>AWSシークレットキー</label><input id="awsSecret" type="password"></div>
+        </div>
+        <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
+          <button class="btn btn-sm" onclick="testS3('${id}')">接続テスト</button>
+          <button class="btn btn-primary-solid btn-sm" onclick="saveS3('${id}')">登録</button>
+          <button class="btn btn-sm" onclick="toggleS3Form()">キャンセル</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById("s3Enabled").value = String(Number(s3.isEnabled || 0));
+  document.getElementById("awsKey").value = s3.awsKey || "";
+  document.getElementById("awsSecret").value = s3.awsSecretKey || "";
+  document.getElementById("bucket").value = s3.bucketName || "";
+  document.getElementById("region").value = s3.region || "";
+  document.getElementById("syncHour").value = String(Number(s3.syncHour || 0));
+  document.getElementById("syncMinute").value = String(Number(s3.syncMinute || 0));
+}
+
+(async () => {
+  if (!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("client.html");
+  await load();
+})();
+</script>
+</body>
+</html>
+

@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1300">
+<title>物件詳細 | Real Estate Manager by DIGITALEYES</title>
+<link rel="stylesheet" href="common.css">
+<style>
+.page-stack { display:flex; flex-direction:column; gap:14px; }
+.panel { background:#fff; border:1px solid rgb(224,224,224); padding:16px 18px; }
+.header-top { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.title-wrap { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.meta { color:rgb(120,130,140); font-size:12px; }
+.status-badge { display:inline-block; padding:3px 9px; border-radius:12px; font-size:11px; font-weight:700; color:#fff; }
+.status-sold { background:#6c757d; }
+.status-sale { background:#2f86d5; }
+.status-prep { background:#d78a2f; }
+.cards { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap:10px; }
+.card { border:1px solid rgb(234,234,234); border-radius:6px; padding:12px; background:#fafafa; min-height:68px; }
+.card .k { font-size:11px; color:rgb(120,130,140); }
+.card .v { font-size:20px; font-weight:700; color:rgb(70,83,98); margin-top:6px; }
+.sec-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.sec-head h2 { font-size:15px; margin:0; }
+.detail-grid { display:grid; grid-template-columns: 200px 1fr; gap:10px 14px; }
+.detail-grid dt { font-weight:600; color:rgb(70,83,98); }
+.detail-grid dd { margin:0; color:rgb(70,83,98); }
+.thumbs { display:flex; gap:10px; flex-wrap:wrap; }
+.thumb { width:160px; border:1px solid #ddd; color:#999; font-size:12px; background:#f2f2f2; border-radius:4px; overflow:hidden; }
+.thumb-img { width:100%; height:108px; object-fit:cover; display:block; background:#eee; }
+.thumb-meta { padding:6px; background:#fff; border-top:1px solid #eee; }
+.upload-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+.log-list { margin:0; padding-left:18px; color:rgb(90,100,110); font-size:13px; }
+details > summary { cursor:pointer; font-weight:600; color:rgb(70,83,98); margin-bottom:8px; }
+.field-input { width:100%; padding:8px 10px; border:1px solid #ced4da; font-family:inherit; }
+.field-input.dirty { border-color: rgb(53,124,176); background: rgb(246,251,255); }
+@media (max-width: 1200px) { .cards { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+</style>
+</head>
+<body>
+<div id="wrapper">
+<div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="page-title-bar">
+      <h1>物件詳細</h1>
+      <a class="btn btn-sm" href="property.html" onclick="return confirmLeaveIfDirty()">一覧へ戻る</a>
+    </div>
+    <div id="content"><div class="loading-spinner"></div></div>
+  </main>
+</div>
+</div>
+<script src="common.js"></script>
+<script>
+function dash(v) { return v == null || String(v).trim() === "" ? "―" : String(v); }
+function dateOnly(v) { return dash(v).slice(0, 10); }
+function num(v) { return v == null || v === "" ? "―" : Number(v).toLocaleString(); }
+function salesLabel(p) { return p.salesStatus || (p.isSoldOut ? "完売" : "販売中"); }
+function salesClass(label) {
+  if (label.includes("完売")) return "status-sold";
+  if (label.includes("準備")) return "status-prep";
+  return "status-sale";
+}
+function isAdmin() { return Number(Auth.getUser()?.role || 0) === 2; }
+function attrEsc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
+let currentPropertyId = null;
+let currentPropertyData = null;
+let propertyDirty = false;
+
+function setPropertyDirty(v) {
+  propertyDirty = Boolean(v);
+  const saveBtns = document.querySelectorAll("button[data-save-kind]");
+  saveBtns.forEach((b) => {
+    b.style.borderColor = propertyDirty ? "rgb(53,124,176)" : "";
+    b.style.boxShadow = propertyDirty ? "0 0 0 2px rgba(53,124,176,.12) inset" : "";
+  });
+}
+function bindPropertyDirtyTracking() {
+  const root = document.getElementById("content");
+  if (!root) return;
+  root.querySelectorAll(".field-input").forEach((el) => {
+    if (el.dataset.dirtyBound === "1") return;
+    el.dataset.dirtyBound = "1";
+    el.addEventListener("input", () => {
+      el.classList.add("dirty");
+      setPropertyDirty(true);
+    });
+  });
+}
+function clearDirtyInputs() {
+  document.querySelectorAll(".field-input.dirty").forEach((el) => el.classList.remove("dirty"));
+}
+function confirmLeaveIfDirty() {
+  if (!propertyDirty) return true;
+  return confirm("未保存の変更があります。保存せずに移動しますか？");
+}
+
+async function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ""));
+    fr.onerror = () => reject(new Error("画像の読み込みに失敗しました"));
+    fr.readAsDataURL(file);
+  });
+}
+
+async function loadImages(propertyId) {
+  const box = document.getElementById("imageList");
+  if (!box) return;
+  box.innerHTML = '<div class="loading-spinner"></div>';
+  const res = await fetch(`${CONFIG.API_BASE}/user/properties/${encodeURIComponent(propertyId)}/images`, {
+    headers: { Authorization: `Bearer ${Auth.getToken()}` },
+  });
+  const d = await res.json();
+  if (!res.ok || !d.ok) throw new Error(d.message || "画像取得に失敗しました");
+  const images = d.images || [];
+  if (!images.length) {
+    box.innerHTML = '<div class="thumb" style="height:108px;display:flex;align-items:center;justify-content:center">No Image</div>';
+    return;
+  }
+  box.innerHTML = images.map((img) => `
+    <div class="thumb">
+      <img class="thumb-img" src="${img.imageData}" alt="${dash(img.filename)}">
+      <div class="thumb-meta">
+        <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgb(90,100,110)">${dash(img.filename)}</div>
+        ${isAdmin() ? `<div style="margin-top:6px"><button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="deleteImage('${img.id}')">削除</button></div>` : ""}
+      </div>
+    </div>
+  `).join("");
+}
+
+async function uploadImage() {
+  const input = document.getElementById("imageInput");
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) { alert("画像ファイルを選択してください"); return; }
+  if (file.size > 3 * 1024 * 1024) { alert("3MB以下の画像を選択してください"); return; }
+  const imageData = await readFileAsDataUrl(file);
+  const res = await fetch(`${CONFIG.API_BASE}/user/properties/${encodeURIComponent(currentPropertyId)}/images`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, mimeType: file.type, imageData }),
+  });
+  const d = await res.json();
+  if (!res.ok || !d.ok) throw new Error(d.message || "画像登録に失敗しました");
+  input.value = "";
+  await loadImages(currentPropertyId);
+}
+
+async function deleteImage(imageId) {
+  if (!confirm("この画像を削除しますか？")) return;
+  const res = await fetch(`${CONFIG.API_BASE}/user/properties/${encodeURIComponent(currentPropertyId)}/images/${encodeURIComponent(imageId)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${Auth.getToken()}` },
+  });
+  const d = await res.json();
+  if (!res.ok || !d.ok) throw new Error(d.message || "画像削除に失敗しました");
+  await loadImages(currentPropertyId);
+}
+
+async function loadDetail() {
+  const id = new URLSearchParams(location.search).get("id");
+  currentPropertyId = id;
+  if (!id) {
+    document.getElementById("content").innerHTML = '<div class="error-box">⚠️ 物件IDが指定されていません。</div>';
+    return;
+  }
+  const res = await fetch(`${CONFIG.API_BASE}/user/properties`, {
+    headers: { Authorization: `Bearer ${Auth.getToken()}` },
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) throw new Error(data.message || "物件取得に失敗しました");
+  const p = (data.properties || []).find((x) => x.id === id);
+  currentPropertyData = p;
+  if (!p) {
+    document.getElementById("content").innerHTML = '<div class="error-box">⚠️ 該当の物件が見つかりません。</div>';
+    return;
+  }
+  const statusText = salesLabel(p);
+  const created = dateOnly(p.createdAt || p.created_at || "");
+  const updated = dateOnly(p.updatedAt || p.updated_at || "");
+  const totalUnits = p.totalUnits ?? p.salesUnits ?? "";
+  const remaining = p.remainingUnits ?? "";
+  const startedVisit = p.visitStartDate || p.salesVisitStartDate || "";
+  const startedSales = p.salesStartDate || "";
+  const completion = p.completionDate || "";
+
+  document.getElementById("content").innerHTML = `
+    <div class="page-stack">
+      <section class="panel">
+        <div class="header-top">
+          <div class="title-wrap">
+            <h2 style="margin:0">${dash(p.name)}</h2>
+            <span class="status-badge ${salesClass(statusText)}">${dash(statusText)}</span>
+          </div>
+          <div class="meta">初回登録日: ${dateOnly(created)} ／ 最終更新日: ${dateOnly(updated)}</div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="cards">
+          <div class="card"><div class="k">総戸数</div><div class="v">${num(totalUnits)}</div></div>
+          <div class="card"><div class="k">残戸数</div><div class="v">${num(remaining)}</div></div>
+          <div class="card"><div class="k">来場開始日</div><div class="v" style="font-size:16px">${dateOnly(startedVisit)}</div></div>
+          <div class="card"><div class="k">販売開始日</div><div class="v" style="font-size:16px">${dateOnly(startedSales)}</div></div>
+          <div class="card"><div class="k">竣工予定日</div><div class="v" style="font-size:16px">${dateOnly(completion)}</div></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="sec-head">
+          <h2>基本情報</h2>
+          <button class="btn btn-sm" data-save-kind="basic" onclick="saveBasicInfo()">保存</button>
+        </div>
+        <dl class="detail-grid">
+          <dt>所在地</dt><dd><input id="fAddress" class="field-input" value="${dash(p.address || p.location) === "―" ? "" : dash(p.address || p.location)}"></dd>
+          <dt>物件スペック</dt><dd>${dash(p.specs || p.propertySpec)}</dd>
+          <dt>関連会社</dt><dd>${dash(p.relatedCompany || p.company)}</dd>
+          <dt>物件の特徴</dt><dd>${dash(p.features || p.description)}</dd>
+          <dt>緯度</dt><dd><input id="fLat" class="field-input" value="${dash(p.latitude) === "―" ? "" : dash(p.latitude)}"></dd>
+          <dt>経度</dt><dd><input id="fLng" class="field-input" value="${dash(p.longitude) === "―" ? "" : dash(p.longitude)}"></dd>
+          <dt>モデルルーム所在地</dt><dd><input id="fModelRoomAddress" class="field-input" value="${dash(p.modelRoomAddress) === "―" ? "" : dash(p.modelRoomAddress)}"></dd>
+        </dl>
+      </section>
+
+      ${isAdmin() ? `
+      <section class="panel">
+        <div class="sec-head">
+          <h2>デジタライズAPI連携</h2>
+          <button class="btn btn-sm" data-save-kind="digitaleyes" onclick="saveDigitaleyesApi()">保存</button>
+        </div>
+        <p class="meta" style="margin:0 0 12px;line-height:1.5">顧客同期および <code>/api/</code> プロキシ呼び出しに使用します。<code>X_secret_id</code> / <code>X_secret_password</code> はサーバーの <code>.env</code>（<code>SECRET_ID</code> / <code>SECRET_PASSWORD</code>）で設定します。</p>
+        <dl class="detail-grid">
+          <dt>データベースID</dt><dd><input id="fDatabaseId" class="field-input" autocomplete="off" value="${attrEsc(p.databaseId || "")}"></dd>
+          <dt>データベースパスワード</dt><dd><input id="fDatabasePassword" type="password" class="field-input" autocomplete="new-password" value="${attrEsc(p.databasePassword || "")}" placeholder="X_database_password に対応"></dd>
+          <dt>テーブル名</dt><dd><input id="fTableName" class="field-input" autocomplete="off" value="${attrEsc(p.tableName || "")}" placeholder="table_name"></dd>
+        </dl>
+      </section>
+      ` : ""}
+
+      <section class="panel">
+        <div class="sec-head">
+          <h2>居室情報</h2>
+          <button class="btn btn-sm" data-save-kind="room" onclick="saveRoomInfo()">保存</button>
+        </div>
+        <dl class="detail-grid">
+          <dt>居室一覧</dt><dd><input id="fRoomSummary" class="field-input" value="${dash(p.roomSummary || p.roomsSummary) === "―" ? "" : dash(p.roomSummary || p.roomsSummary)}"></dd>
+          <dt>添付情報</dt><dd><textarea id="fRoomAttachment" class="field-input" rows="3">${dash(p.roomAttachment) === "―" ? "" : dash(p.roomAttachment)}</textarea></dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <div class="sec-head">
+          <h2>物件画像</h2>
+          ${isAdmin() ? `<div class="upload-row">
+            <input id="imageInput" type="file" accept="image/*" style="max-width:280px">
+            <button class="btn btn-primary-solid btn-sm" onclick="uploadImage()">画像登録</button>
+          </div>` : ""}
+        </div>
+        <div class="thumbs" id="imageList"><div class="loading-spinner"></div></div>
+      </section>
+
+      <section class="panel">
+        <details open>
+          <summary>展示場予約設定</summary>
+          <dl class="detail-grid">
+            <dt>予約受付期間</dt><dd><input id="fBookingOpenDays" class="field-input" value="${dash(p.bookingOpenDays)==="―"?"":dash(p.bookingOpenDays)}"></dd>
+            <dt>予約上限数</dt><dd><input id="fDailyLimit" class="field-input" value="${dash(p.dailyLimit)==="―"?"":dash(p.dailyLimit)}"></dd>
+            <dt>部屋名</dt><dd><input id="fRoomNames" class="field-input" value="${dash(p.roomNames)==="―"?"":dash(p.roomNames)}"></dd>
+            <dt>自動連携時に確保する時間(分)</dt><dd><input id="fAutoSlotMinutes" class="field-input" value="${dash(p.autoSlotMinutes)==="―"?"":dash(p.autoSlotMinutes)}"></dd>
+            <dt>週報の週の開始曜日</dt><dd>
+              <label style="margin-right:16px"><input type="radio" name="fWeekStartDay" value="monday" ${String(p.week_start_day || "monday") === "monday" ? "checked" : ""}> 月曜始まり</label>
+              <label><input type="radio" name="fWeekStartDay" value="sunday" ${String(p.week_start_day || "monday") === "sunday" ? "checked" : ""}> 日曜始まり</label>
+            </dd>
+          </dl>
+          <div style="margin-top:8px"><button class="btn btn-sm" data-save-kind="reservation" onclick="saveReservationSettings()">保存</button></div>
+        </details>
+      </section>
+
+      <section class="panel">
+        <details>
+          <summary>反響目標</summary>
+          <dl class="detail-grid">
+            <dt>月間目標件数</dt><dd><input id="fLeadTargetMonthly" class="field-input" value="${dash(p.leadTargetMonthly)==="―"?"":dash(p.leadTargetMonthly)}"></dd>
+            <dt>来場目標件数</dt><dd><input id="fVisitTargetMonthly" class="field-input" value="${dash(p.visitTargetMonthly)==="―"?"":dash(p.visitTargetMonthly)}"></dd>
+            <dt>契約目標件数</dt><dd><input id="fContractTargetMonthly" class="field-input" value="${dash(p.contractTargetMonthly)==="―"?"":dash(p.contractTargetMonthly)}"></dd>
+          </dl>
+          <div style="margin-top:8px"><button class="btn btn-sm" data-save-kind="targets" onclick="saveTargets()">保存</button></div>
+        </details>
+      </section>
+
+      <section class="panel">
+        <div class="sec-head"><h2>更新履歴</h2></div>
+        <div id="historyList"><div class="loading-spinner"></div></div>
+      </section>
+    </div>`;
+  await loadImages(id);
+  await loadPropertyHistory(id, created, updated);
+  setPropertyDirty(false);
+  bindPropertyDirtyTracking();
+}
+
+async function patchMeta(patch) {
+  const res = await fetch(`${CONFIG.API_BASE}/user/properties/${encodeURIComponent(currentPropertyId)}/meta`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ patch }),
+  });
+  const d = await res.json();
+  if (!res.ok || !d.ok) throw new Error(d.message || "保存に失敗しました");
+  return d.property;
+}
+
+async function saveDigitaleyesApi() {
+  if (!isAdmin()) return;
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/user/properties/${encodeURIComponent(currentPropertyId)}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: String(currentPropertyData?.name || "").trim() || "未命名",
+        databaseId: document.getElementById("fDatabaseId").value.trim(),
+        databasePassword: document.getElementById("fDatabasePassword").value,
+        tableName: document.getElementById("fTableName").value.trim(),
+      }),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.message || "保存に失敗しました");
+    alert("デジタライズAPI連携情報を保存しました");
+    setPropertyDirty(false);
+    clearDirtyInputs();
+    await loadDetail();
+  } catch (e) { alert(e.message); }
+}
+
+async function saveBasicInfo() {
+  try {
+    await patchMeta({
+      address: document.getElementById("fAddress").value.trim(),
+      latitude: document.getElementById("fLat").value.trim(),
+      longitude: document.getElementById("fLng").value.trim(),
+      modelRoomAddress: document.getElementById("fModelRoomAddress").value.trim(),
+    });
+    alert("基本情報を保存しました");
+    setPropertyDirty(false);
+    clearDirtyInputs();
+    await loadDetail();
+  } catch (e) { alert(e.message); }
+}
+
+async function saveRoomInfo() {
+  try {
+    await patchMeta({
+      roomSummary: document.getElementById("fRoomSummary").value.trim(),
+      roomAttachment: document.getElementById("fRoomAttachment").value.trim(),
+    });
+    alert("居室情報を保存しました");
+    setPropertyDirty(false);
+    clearDirtyInputs();
+    await loadDetail();
+  } catch (e) { alert(e.message); }
+}
+
+async function saveReservationSettings() {
+  try {
+    const weekStartEl = document.querySelector("input[name='fWeekStartDay']:checked");
+    await patchMeta({
+      bookingOpenDays: document.getElementById("fBookingOpenDays").value.trim(),
+      dailyLimit: document.getElementById("fDailyLimit").value.trim(),
+      roomNames: document.getElementById("fRoomNames").value.trim(),
+      autoSlotMinutes: document.getElementById("fAutoSlotMinutes").value.trim(),
+      week_start_day: weekStartEl?.value === "sunday" ? "sunday" : "monday",
+    });
+    alert("展示場予約設定を保存しました");
+    setPropertyDirty(false);
+    clearDirtyInputs();
+    await loadDetail();
+  } catch (e) { alert(e.message); }
+}
+
+async function saveTargets() {
+  try {
+    await patchMeta({
+      leadTargetMonthly: document.getElementById("fLeadTargetMonthly").value.trim(),
+      visitTargetMonthly: document.getElementById("fVisitTargetMonthly").value.trim(),
+      contractTargetMonthly: document.getElementById("fContractTargetMonthly").value.trim(),
+    });
+    alert("反響目標を保存しました");
+    setPropertyDirty(false);
+    clearDirtyInputs();
+    await loadDetail();
+  } catch (e) { alert(e.message); }
+}
+
+async function loadPropertyHistory(propertyId, created, updated) {
+  const el = document.getElementById("historyList");
+  if (!el) return;
+  const res = await fetch(`${CONFIG.API_BASE}/user/properties/${encodeURIComponent(propertyId)}/history?limit=100`, {
+    headers: { Authorization: `Bearer ${Auth.getToken()}` },
+  });
+  const d = await res.json();
+  if (!res.ok || !d.ok) {
+    el.innerHTML = `<ol class="log-list"><li>初回登録: ${dateOnly(created)}</li><li>最終更新: ${dateOnly(updated)}</li></ol>`;
+    return;
+  }
+  const rows = d.history || [];
+  if (!rows.length) {
+    el.innerHTML = `<ol class="log-list"><li>初回登録: ${dateOnly(created)}</li><li>最終更新: ${dateOnly(updated)}</li></ol>`;
+    return;
+  }
+  el.innerHTML = `<ol class="log-list">${rows.map((h) => {
+    let t = "更新";
+    try { const j = JSON.parse(h.changeJson || "{}"); t = j.type || t; } catch (_) {}
+    return `<li>${(h.createdAt || "").replace("T"," ").slice(0,16)} / ${t}${h.actorName ? ` / ${h.actorName}` : ""}</li>`;
+  }).join("")}</ol>`;
+}
+
+(async () => {
+  if (!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("property.html");
+  window.addEventListener("beforeunload", (e) => {
+    if (!propertyDirty) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
+  try { await loadDetail(); }
+  catch (e) { document.getElementById("content").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`; }
+})();
+</script>
+</body>
+</html>

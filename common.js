@@ -68,40 +68,86 @@ function renderHeader(currentPage) {
   const user = Auth.getUser();
   const props = Auth.getProperties();
   const active = Auth.getActiveProperty();
-  const nav = [
+  const isAdmin = Number(user?.role) === 2;
+  const labelOfProp = (p) => {
+    const raw = p?.name ?? p?.propertyName ?? "";
+    const s = String(raw).trim();
+    return s && s !== "undefined" ? s : `物件(${p?.id || "-"})`;
+  };
+  const propertyOptions = props.length
+    ? props.map(p => {
+      const lbl = String(labelOfProp(p)).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+      const cls = p.id === active?.id ? "current" : "";
+      return `<button type="button" class="prop-picker-item ${cls}" onclick="chooseProperty('${p.id}')">${lbl}</button>`;
+    }).join("")
+    : `<button type="button" class="prop-picker-item" onclick="location.href='property.html'">物件未登録 → 物件管理へ</button>`;
+
+  const navItems = [
     { label: "ダッシュボード", href: "dashboard.html" },
     { label: "顧客一覧", href: "customer.html" },
+    { label: "顧客マッピング", href: "customer-mapping.html" },
+    { label: "ポータル管理", href: "ad.html" },
     { label: "接客スケジュール", href: "schedule.html" },
-    { label: "物件一覧", href: "property.html" },
-    { label: "クライアント一覧", href: "client.html" },
-    { label: "広告管理", href: "ad.html" },
-    { label: "設定", href: "settings.html" },
-  ];
-  const propertyOptions = props.length
-    ? props.map(p => `<option value="${p.id}" ${p.id === active?.id ? "selected" : ""}>${p.name}</option>`).join("")
-    : `<option value="">物件未登録 → 設定ページへ</option>`;
+    { label: "物件管理", href: "property.html" },
+    { label: "素材ギャラリー", href: "gallery.html" },
+    { label: "設定", href: "settings.html", adminOnly: true },
+    { label: "クライアント管理", href: "client.html", adminOnly: true },
+    { label: "アカウント管理", href: "account.html", adminOnly: true },
+  ].filter((n) => !n.adminOnly || isAdmin);
 
   return `
-    <div class="header-welcome">
-      <span class="user-name">${user?.name || ""} さま</span>
-    </div>
-    <div class="d-flex align-items-center">
-      <div class="header-select">
-        <select onchange="onPropertyChange(this.value)">${propertyOptions}</select>
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-main">Real Estate Manager</span>
+        <span class="brand-sub">by DIGITALEYES</span>
       </div>
-      <nav>
-        <ul class="header-navigation__list">
-          ${nav.map(n => `<li><a href="${n.href}" class="${n.href === currentPage ? 'current' : ''}">${n.label}</a></li>`).join('')}
-          <li><button class="btn-logout" onclick="logout()">ログアウト</button></li>
-        </ul>
-      </nav>
+      <div class="sidebar-group">
+        ${navItems.map(n => `<a href="${n.href}" class="${n.href === currentPage ? "current" : ""}">${n.label}</a>`).join("")}
+      </div>
+      <div class="sidebar-footer">
+        <button class="btn-logout" onclick="logout()">ログアウト</button>
+      </div>
+    </aside>
+
+    <div class="header-welcome">
+      <span class="user-name">${user?.name || ""}</span>
+      <span>さま</span>
+    </div>
+    <div class="d-flex align-items-center gap-3">
+      <div class="header-select">
+        <div class="prop-picker" id="propPicker">
+          <button type="button" class="prop-picker-btn" onclick="togglePropertyPicker()">${labelOfProp(active || props[0] || { id: "-" })}</button>
+          <div class="prop-picker-menu">${propertyOptions}</div>
+        </div>
+      </div>
     </div>
   `;
 }
 
+function togglePropertyPicker() {
+  const el = document.getElementById("propPicker");
+  if (!el) return;
+  el.classList.toggle("open");
+}
+function closePropertyPicker() {
+  const el = document.getElementById("propPicker");
+  if (!el) return;
+  el.classList.remove("open");
+}
+async function chooseProperty(propertyId) {
+  closePropertyPicker();
+  await onPropertyChange(propertyId);
+}
 async function onPropertyChange(propertyId) {
   await selectProperty(propertyId);
   location.reload();
+}
+if (typeof document !== "undefined") {
+  document.addEventListener("click", (ev) => {
+    const el = document.getElementById("propPicker");
+    if (!el) return;
+    if (!el.contains(ev.target)) el.classList.remove("open");
+  });
 }
 
 // ── APIコール ──────────────────────────────────
@@ -121,8 +167,27 @@ async function apiCall(params) {
     },
     body: postData.toString()
   });
-  if (!res.ok) throw new Error(`HTTPエラー: ${res.status}`);
-  const data = await res.json();
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (_) {
+    if (!res.ok) {
+      throw new Error(
+        `HTTPエラー: ${res.status} — 応答がJSONではありません（${text.slice(0, 120)}${text.length > 120 ? "…" : ""}）`
+      );
+    }
+    throw new Error("API応答の解析に失敗しました");
+  }
+  if (!res.ok) {
+    const msg =
+      data.message ||
+      data.error ||
+      data.Message ||
+      (typeof data.status === "string" ? data.status : "") ||
+      "";
+    throw new Error(msg ? `HTTPエラー: ${res.status} — ${msg}` : `HTTPエラー: ${res.status}`);
+  }
   if (!data.status) throw new Error(data.message || "APIエラー");
   return data.data;
 }

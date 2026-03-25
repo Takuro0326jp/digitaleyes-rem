@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1300">
+  <title>クライアント登録 | Real Estate Manager by DIGITALEYES</title>
+  <link rel="stylesheet" href="common.css">
+  <style>
+    .crumb { font-size:12px; color:rgb(120,130,140); margin: 14px 0 6px; }
+    .crumb a { color:rgb(53,124,176); }
+    .form-card { background:#fff; border:1px solid rgb(224,224,224); padding:18px; max-width:760px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .fg label { display:block; font-size:12px; font-weight:700; margin-bottom:6px; }
+    .fg input, .fg select { width:100%; padding:8px 10px; border:1px solid #ced4da; font-family:inherit; }
+    .err { color:#cc0000; font-size:12px; margin-top:6px; display:none; }
+  </style>
+</head>
+<body>
+<div id="wrapper">
+<div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="crumb"><a href="dashboard.html">ダッシュボード</a> ＞ <a href="client.html">クライアント一覧</a> ＞ クライアント登録</div>
+    <div class="page-title-bar">
+      <h1>クライアント登録</h1>
+      <a class="btn btn-sm" href="client.html">一覧へ戻る</a>
+    </div>
+
+    <div class="form-card">
+      <div class="grid">
+        <div class="fg">
+          <label>企業名 <span style="color:#cc0000">*</span></label>
+          <input id="fName" placeholder="例：株式会社○○">
+          <div class="err" id="eName"></div>
+        </div>
+        <div class="fg">
+          <label>フリガナ <span style="color:#cc0000">*</span></label>
+          <input id="fKana" placeholder="例：カブシキガイシャ○○">
+          <div class="err" id="eKana"></div>
+        </div>
+        <div class="fg">
+          <label>E-mail <span style="color:#cc0000">*</span></label>
+          <input id="fEmail" placeholder="example@company.com">
+          <div class="err" id="eEmail"></div>
+        </div>
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px">
+        <a class="btn btn-sm" href="client.html" style="text-decoration:none">キャンセル</a>
+        <button class="btn btn-primary-solid btn-sm" onclick="submitCreate()">登録</button>
+      </div>
+      <div id="formMsg" class="error-box" style="display:none;margin-top:12px"></div>
+    </div>
+  </main>
+</div>
+</div>
+
+<div class="modal-overlay" id="confirmModal" style="display:none" onclick="closeConfirm()">
+  <div class="modal-box" style="max-width:520px" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3>確認</h3>
+      <button class="modal-close" onclick="closeConfirm()">✕</button>
+    </div>
+    <div class="modal-body">登録します。よろしいですか？</div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" onclick="closeConfirm()">キャンセル</button>
+      <button class="btn btn-primary-solid btn-sm" onclick="confirmCreate()">登録する</button>
+    </div>
+  </div>
+</div>
+
+<script src="common.js"></script>
+<script>
+function setErr(id, msg) { const el = document.getElementById(id); el.textContent = msg; el.style.display = "block"; }
+function clearErr() { ["eName","eKana","eEmail"].forEach(id => { const el=document.getElementById(id); el.style.display="none"; el.textContent=""; }); document.getElementById("formMsg").style.display="none"; }
+function closeConfirm(){ document.getElementById("confirmModal").style.display="none"; }
+function validEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s||"").trim()); }
+
+function submitCreate() {
+  clearErr();
+  const name = document.getElementById("fName").value.trim();
+  const nameKana = document.getElementById("fKana").value.trim();
+  const email = document.getElementById("fEmail").value.trim();
+  let ok = true;
+  if (!name) { setErr("eName","必須です"); ok=false; }
+  if (!nameKana) { setErr("eKana","必須です"); ok=false; }
+  if (!email) { setErr("eEmail","必須です"); ok=false; }
+  else if (!validEmail(email)) { setErr("eEmail","形式が不正です"); ok=false; }
+  if (!ok) return;
+  window.__createPayload = { name, nameKana, email };
+  document.getElementById("confirmModal").style.display="flex";
+}
+
+async function confirmCreate() {
+  const payload = window.__createPayload || {};
+  const res = await fetch(`${CONFIG.API_BASE}/client/create`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const d = await res.json();
+  if (!d.ok) {
+    closeConfirm();
+    document.getElementById("formMsg").textContent = d.message || "登録に失敗しました";
+    document.getElementById("formMsg").style.display = "block";
+    return;
+  }
+  location.href = "client.html";
+}
+
+(async () => {
+  if (!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("client.html");
+})();
+</script>
+</body>
+</html>
+

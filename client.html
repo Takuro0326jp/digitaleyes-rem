@@ -1,126 +1,230 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=1300">
-<title>クライアント一覧 | Real Estate Manager by DIGITALEYES</title>
-<link rel="stylesheet" href="common.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1300">
+  <title>クライアント一覧 | Real Estate Manager by DIGITALEYES</title>
+  <link rel="stylesheet" href="common.css">
+  <style>
+    .crumb { font-size:12px; color:rgb(120,130,140); margin: 14px 0 6px; }
+    .crumb a { color:rgb(53,124,176); }
+    .row-even td { background: rgba(53,124,176,0.06); }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000; display:none; align-items:center; justify-content:center; padding:24px; }
+    .modal-box { background:#fff; width:100%; max-width:560px; box-shadow:0 8px 40px rgba(0,0,0,0.25); }
+    .modal-header { background: rgb(70,83,98); padding: 14px 20px; display:flex; align-items:center; justify-content:space-between; }
+    .modal-header h3 { color:#fff; font-size: 16px; font-weight:600; }
+    .modal-close { background:none; border:none; color:#fff; font-size:20px; cursor:pointer; }
+    .modal-body { padding: 18px 20px; }
+    .modal-footer { padding: 12px 20px; border-top:1px solid rgb(224,224,224); display:flex; justify-content:flex-end; gap:8px; }
+  </style>
 </head>
 <body>
 <div id="wrapper">
 <div id="page-wrapper">
   <header class="header" id="header"></header>
   <main class="main">
+    <div class="crumb"><a href="dashboard.html">ダッシュボード</a> ＞ クライアント一覧</div>
     <div class="page-title-bar">
       <h1>クライアント一覧</h1>
       <span id="totalLabel" style="font-size:13px;color:rgb(120,130,140)"></span>
     </div>
 
-    <div class="filter-bar">
-      <div class="filter-item">
-        <label>キーワード（担当者名）</label>
-        <input type="text" id="fTantousha" placeholder="担当者名で検索" onkeydown="if(event.key==='Enter')search()">
-      </div>
-      <div class="filter-item">
-        <label>担当会社</label>
-        <select id="fCompany"><option value="">すべて</option><option>ワールドエステート</option><option>シアーズ</option></select>
-      </div>
-      <div>
-        <button class="btn btn-primary-solid" onclick="search()">検索</button>
-        <button class="btn" onclick="clearFilters()" style="margin-left:4px">クリア</button>
-      </div>
+    <div class="action-row">
+      <button class="btn btn-primary-solid btn-sm" onclick="openClientModal()">新規登録</button>
+      <button class="btn btn-sm" id="btnToggleAll" onclick="toggleAll()">全て選択</button>
+      <button class="btn btn-sm" id="btnDelete" onclick="openDelete()" disabled>削除</button>
     </div>
 
-    <div id="tableArea"></div>
-    <div class="pagination" id="pagination"></div>
+    <div id="tableArea"><div class="loading-spinner"></div></div>
   </main>
 </div>
 </div>
+
+<div class="modal-overlay" id="clientModal" onclick="closeClientModal()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="clientModalTitle">クライアント登録</h3>
+      <button class="modal-close" onclick="closeClientModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="mId">
+      <div class="form-row">
+        <div class="form-group" style="flex:1;min-width:240px">
+          <label>企業名 <span style="color:#cc0000">*</span></label>
+          <input id="mName">
+        </div>
+        <div class="form-group" style="flex:1;min-width:240px">
+          <label>フリガナ <span style="color:#cc0000">*</span></label>
+          <input id="mKana">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1;min-width:240px">
+          <label>E-mail <span style="color:#cc0000">*</span></label>
+          <input id="mEmail">
+        </div>
+      </div>
+      <div id="mErr" class="error-box" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" onclick="closeClientModal()">キャンセル</button>
+      <button class="btn btn-primary-solid btn-sm" onclick="saveClientModal()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="deleteModal" onclick="closeDelete()">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3>削除確認</h3>
+      <button class="modal-close" onclick="closeDelete()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-weight:700;margin-bottom:8px">本当にこの項目を削除しますか？</div>
+      <div style="color:rgb(120,130,140)">この操作は取り消せません。</div>
+      <div id="deleteCount" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" onclick="closeDelete()">キャンセル</button>
+      <button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="confirmDelete()">削除する</button>
+    </div>
+  </div>
+</div>
+
 <script src="common.js"></script>
 <script>
-const LIMIT = 20;
-let customers = [], totalCount = 0, currentPage = 1;
+let clients = [];
+let selected = new Set();
+function validEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s||"").trim()); }
 
-function search() { currentPage = 1; load(); }
-function clearFilters() {
-  document.getElementById("fTantousha").value = "";
-  document.getElementById("fCompany").value = "";
-  search();
+function updateDeleteUi() {
+  document.getElementById("btnDelete").disabled = selected.size === 0;
+  document.getElementById("btnToggleAll").textContent = (clients.length && selected.size === clients.length) ? "選択解除" : "全て選択";
 }
 
-async function load() {
-  document.getElementById("tableArea").innerHTML = '<div class="loading-spinner"></div>';
-  try {
-    const tantousha = document.getElementById("fTantousha").value;
-    const company = document.getElementById("fCompany").value;
-    const cond = {};
-    if (tantousha) cond["c.tantousha like"] = `%${tantousha}%`;
-    if (company) cond["c.questionnaire45"] = company;
-
-    const params = {
-      limit: LIMIT, page: currentPage,
-      order: JSON.stringify(["c.upd_date desc"]),
-      fields: JSON.stringify(["c.id","c.name","c.kana","c.status","c.tantousha","c.questionnaire45","c.date_entry","c.date_visit","c.date_contract","c.baitai","c.mail","c.tel","c.upd_date"])
-    };
-    if (Object.keys(cond).length) params.conditions = JSON.stringify([cond]);
-
-    const data = await apiCall(params);
-    customers = data.result || [];
-    totalCount = parseTotalCount(data);
-    document.getElementById("totalLabel").textContent = `総件数: ${totalCount.toLocaleString()}件`;
-    renderTable(); renderPagination();
-  } catch(e) {
-    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`;
+function render() {
+  document.getElementById("totalLabel").textContent = `総件数: ${clients.length.toLocaleString()}件`;
+  if (!clients.length) {
+    document.getElementById("tableArea").innerHTML = '<div class="empty-msg">クライアントがありません</div>';
+    updateDeleteUi();
+    return;
   }
-}
-
-function renderTable() {
-  if (!customers.length) { document.getElementById("tableArea").innerHTML = '<div class="empty-msg">データが見つかりませんでした</div>'; return; }
   let html = `<div class="table-scroll"><table class="list-table">
     <thead><tr>
-      <th>顧客ID</th><th>顧客名</th><th>ステータス</th><th>担当者</th><th>担当会社</th>
-      <th>反響媒体</th><th>反響日</th><th>来場日</th><th>契約日</th><th>電話番号</th><th>更新日</th>
+      <th style="width:46px"><input type="checkbox" onclick="toggleAll()" ${selected.size===clients.length?"checked":""}></th>
+      <th>企業名</th><th>E-mail</th><th style="width:90px">詳細</th>
     </tr></thead><tbody>`;
-  customers.forEach(c => {
-    html += `<tr>
-      <td style="color:rgb(120,130,140)">${c["c.id"]||""}</td>
-      <td style="font-weight:600">${c["c.name"]||""}<br><span style="font-size:11px;color:rgb(150,160,170)">${c["c.kana"]||""}</span></td>
-      <td>${statusBadge(c["c.status"])}</td>
-      <td>${c["c.tantousha"]||""}</td>
-      <td>${c["c.questionnaire45"]||""}</td>
-      <td>${baitaiBadge(c["c.baitai"])}</td>
-      <td style="white-space:nowrap">${c["c.date_entry"]||""}</td>
-      <td style="white-space:nowrap">${c["c.date_visit"]||""}</td>
-      <td style="white-space:nowrap">${c["c.date_contract"]||""}</td>
-      <td>${c["c.tel"]||""}</td>
-      <td style="white-space:nowrap;color:rgb(150,160,170)">${c["c.upd_date"]?c["c.upd_date"].slice(0,10):""}</td>
+  clients.forEach((c, idx) => {
+    const checked = selected.has(String(c.id));
+    html += `<tr class="${idx%2===1?'row-even':''}">
+      <td style="text-align:center"><input type="checkbox" ${checked?"checked":""} onchange="toggleOne('${c.id}')"></td>
+      <td style="font-weight:700">${c.name || ""}</td>
+      <td style="color:rgb(53,124,176)">${c.email || ""}</td>
+      <td><button class="btn btn-sm" onclick="openClientModal('${c.id}')">詳細</button></td>
     </tr>`;
   });
   html += "</tbody></table></div>";
   document.getElementById("tableArea").innerHTML = html;
+  updateDeleteUi();
 }
 
-function renderPagination() {
-  const total = Math.ceil(totalCount / LIMIT);
-  if (total <= 1) return;
-  const start = Math.max(1, currentPage-4), end = Math.min(total, start+8);
-  let html = `<button onclick="goPage(${currentPage-1})" ${currentPage===1?"disabled":""}>＜</button>`;
-  for (let i = start; i <= end; i++) html += `<button class="${i===currentPage?"active":""}" onclick="goPage(${i})">${i}</button>`;
-  html += `<button onclick="goPage(${currentPage+1})" ${currentPage===total?"disabled":""}>＞</button>`;
-  document.getElementById("pagination").innerHTML = html;
+function toggleOne(id) {
+  const k = String(id);
+  if (selected.has(k)) selected.delete(k);
+  else selected.add(k);
+  updateDeleteUi();
 }
 
-function goPage(p) {
-  const t = Math.ceil(totalCount/LIMIT);
-  if (p<1||p>t) return;
-  currentPage = p; load(); window.scrollTo(0,0);
+function toggleAll() {
+  if (!clients.length) return;
+  if (selected.size === clients.length) selected = new Set();
+  else selected = new Set(clients.map((c) => String(c.id)));
+  render();
+}
+
+function openDelete() {
+  if (!selected.size) return;
+  document.getElementById("deleteCount").textContent = `選択した ${selected.size} 件を削除します。`;
+  document.getElementById("deleteModal").style.display = "flex";
+}
+function closeDelete() { document.getElementById("deleteModal").style.display = "none"; }
+
+function closeClientModal() {
+  document.getElementById("clientModal").style.display = "none";
+}
+
+function openClientModal(id = "") {
+  const c = id ? clients.find((x) => String(x.id) === String(id)) : null;
+  document.getElementById("mId").value = c ? c.id : "";
+  document.getElementById("mName").value = c?.name || "";
+  document.getElementById("mKana").value = c?.nameKana || "";
+  document.getElementById("mEmail").value = c?.email || "";
+  document.getElementById("clientModalTitle").textContent = c ? "クライアント詳細・編集" : "クライアント登録";
+  document.getElementById("mErr").style.display = "none";
+  document.getElementById("mErr").textContent = "";
+  document.getElementById("clientModal").style.display = "flex";
+}
+
+async function saveClientModal() {
+  const id = document.getElementById("mId").value;
+  const name = document.getElementById("mName").value.trim();
+  const nameKana = document.getElementById("mKana").value.trim();
+  const email = document.getElementById("mEmail").value.trim();
+  if (!name || !nameKana || !email) {
+    document.getElementById("mErr").textContent = "企業名・フリガナ・E-mail は必須です";
+    document.getElementById("mErr").style.display = "block";
+    return;
+  }
+  if (!validEmail(email)) {
+    document.getElementById("mErr").textContent = "E-mail 形式が不正です";
+    document.getElementById("mErr").style.display = "block";
+    return;
+  }
+  const url = id ? `${CONFIG.API_BASE}/client/edit/${encodeURIComponent(id)}` : `${CONFIG.API_BASE}/client/create`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ name, nameKana, email }),
+  });
+  const d = await res.json();
+  if (!d.ok) {
+    document.getElementById("mErr").textContent = d.message || "保存に失敗しました";
+    document.getElementById("mErr").style.display = "block";
+    return;
+  }
+  closeClientModal();
+  await load();
+}
+
+async function confirmDelete() {
+  const ids = Array.from(selected);
+  const res = await fetch(`${CONFIG.API_BASE}/client/delete`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  const d = await res.json();
+  if (!d.ok) { alert(d.message || "削除に失敗しました"); return; }
+  closeDelete();
+  await load();
+}
+
+async function load() {
+  selected = new Set();
+  document.getElementById("tableArea").innerHTML = '<div class="loading-spinner"></div>';
+  const res = await fetch(`${CONFIG.API_BASE}/client?api=1`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
+  const d = await res.json();
+  if (!d.ok) { document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${d.message || "取得に失敗しました"}</div>`; return; }
+  clients = d.clients || [];
+  render();
 }
 
 (async () => {
   if (!await requireAuth()) return;
   document.getElementById("header").innerHTML = renderHeader("client.html");
-  load();
+  await load();
 })();
 </script>
 </body>
 </html>
+
