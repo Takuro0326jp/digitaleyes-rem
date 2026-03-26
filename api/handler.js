@@ -81,6 +81,7 @@ const { sendAccountInviteMail, hasSmtpEnv } = require("../lib/mailer");
 const { buildWeeklyReportBuffer } = require("../lib/weekly-report");
 const { buildCustomerAnalysisReport } = require("../lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("../lib/customer-karte-export");
+const { resolveDatabaseUrl, getDb } = require("../lib/sync-db");
 
 const API_HOST = "api.digital-eyes.jp";
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -201,6 +202,25 @@ function getToken(req) {
   return auth.replace(/^Bearer\s+/i, "").trim();
 }
 
+function classifyDbUrl(raw) {
+  const s = String(raw || "");
+  if (s.startsWith("file:") && s.includes("memory")) return "memory";
+  if (s.startsWith("libsql://")) return "libsql_remote";
+  if (s.startsWith("file:")) return "file_local";
+  return "other";
+}
+
+/** Vercel かつメモリ DB のときのみ（同期データが保持されない） */
+function dbPersistenceWarningPayload() {
+  if (!process.env.VERCEL) return null;
+  try {
+    if (classifyDbUrl(resolveDatabaseUrl()) !== "memory") return null;
+  } catch (_) {
+    return null;
+  }
+  return "Vercel 本番で DATABASE_URL（Turso の libsql://…）と TURSO_AUTH_TOKEN が未設定のため、メモリ内 DB にフォールバックしています。同期した顧客データはインスタンス間で共有されず、冷えたあと消えます。Environment Variables に設定し Redeploy してください。";
+}
+
 function readJsonBody(req) {
   return new Promise((resolve) => {
     let body = "";
@@ -306,6 +326,48 @@ module.exports = async (req, res) => {
       return;
     }
     if (!routePath.startsWith("/")) routePath = "/" + routePath;
+
+    // ── GET /local/db-diag（トークン・URL は返さない。本番の DB 接続状況確認用）──
+    if (routePath === "/local/db-diag" && req.method === "GET") {
+      let raw = "";
+      try {
+        raw = resolveDatabaseUrl();
+      } catch (e) {
+        json(res, 200, {
+          ok: false,
+          vercel: Boolean(process.env.VERCEL),
+          dbMode: "error",
+          resolveError: String(e && e.message ? e.message : e),
+        });
+        return;
+      }
+      const hasDatabaseUrl = Boolean(
+        process.env.DATABASE_URL || process.env.TURSO_DATABASE_URL || process.env.LIBSQL_URL
+      );
+      const hasTursoToken = Boolean(
+        process.env.TURSO_AUTH_TOKEN || process.env.TURSO_API_TOKEN
+      );
+      let pingOk = false;
+      let pingError = "";
+      try {
+        const db = await getDb();
+        await db.execute("SELECT 1 AS ok");
+        pingOk = true;
+      } catch (e) {
+        pingError = String(e && e.message ? e.message : e);
+      }
+      json(res, 200, {
+        ok: true,
+        vercel: Boolean(process.env.VERCEL),
+        dbMode: classifyDbUrl(raw),
+        hasDatabaseUrl,
+        hasTursoToken,
+        pingOk,
+        pingError: pingError || undefined,
+        jwtFromEnv: Boolean(process.env.JWT_SECRET || process.env.REM_SESSION_SECRET),
+      });
+      return;
+    }
 
     const env = ENV();
     const secretId = env.SECRET_ID || "";
@@ -1311,17 +1373,28 @@ module.exports = async (req, res) => {
 
   // ── GET /local/sync-status ──
   if (routePath === "/local/sync-status" && req.method === "GET") {
+    const persistWarn = dbPersistenceWarningPayload();
+    const persistExtra = persistWarn
+      ? { dbEphemeral: true, dbPersistenceWarning: persistWarn }
+      : {};
     const prop = await getActivePropertyForUser(session.userId);
     if (!prop) {
-      json(res, 200, { ok: true, hasData: false, rows_total: 0 });
+      json(res, 200, { ok: true, hasData: false, rows_total: 0, ...persistExtra });
       return;
     }
     try {
       const st = await getSyncStatus(prop.id);
-      json(res, 200, { ok: true, ...st });
+      json(res, 200, { ok: true, ...st, ...persistExtra });
     } catch (e) {
-      console.error(e);
-      json(res, 500, { ok: false, message: e.message || String(e) });
+      console.error("[local/sync-status]", e.stack || e);
+      // 500 にするとフロントが ok を見ず握りつぶすため、接続エラーでも 200 + dbQueryError で返す
+      json(res, 200, {
+        ok: true,
+        hasData: false,
+        rows_total: 0,
+        dbQueryError: e.message || String(e),
+        ...persistExtra,
+      });
     }
     return;
   }

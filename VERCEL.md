@@ -59,6 +59,8 @@
 
 **Production / Preview / Development** のどれに付けるかは用途に合わせて選びます。少なくとも **Production** には入れてください。
 
+補足: Turso URL とトークン以外に必要な本番変数の一覧は **`docs/PRODUCTION-CHECKLIST.md`** を参照してください。
+
 ### 顧客一覧のローカル DB・差分同期
 
 - ローカル（`npm run dev`）では、未設定時 **`data/sync.db`** に顧客スナップショットが保存されます（`.gitignore` 対象）。
@@ -66,6 +68,20 @@
 - **全件同期**は初回・リセット用です。一覧表示は同期後は **デジタライズへのリクエストなし**で DB から読みます。
 
 保存後、**Deployments** から **Redeploy**（最新デプロイの「…」メニュー）を実行すると、環境変数が反映されます。
+
+---
+
+## 本番の DB が効いているか（トラブルシュート）
+
+デプロイ後、ブラウザまたは `curl` で次を開きます（認証不要・秘密は返しません）。
+
+`https://<あなたのドメイン>/local/db-diag`
+
+- **`dbMode`**: `libsql_remote` なら Turso 接続を狙っています。`memory` のままなら **`DATABASE_URL` がそのデプロイに載っていない**か、変数名が違います。Redeploy を忘れずに。
+- **`hasDatabaseUrl` / `hasTursoToken`**: どちらかが `false` なら Vercel の Environment Variables を確認してください。`libsql://` には **トークンも必須**です。
+- **`pingOk`**: `true` なら `SELECT 1` まで成功しています。`false` のとき **`pingError`** に接続エラー（トークン不正・URL 誤り・ネットワークなど）が入ります。
+
+顧客一覧のキャッシュ行に「永続DB未接続」と出る場合は、`GET /local/sync-status` のレスポンスに `dbEphemeral` / `dbPersistenceWarning` が付いているかも併せて確認してください。
 
 ---
 

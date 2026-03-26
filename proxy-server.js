@@ -97,7 +97,15 @@ function loadEnv() {
   } catch { return {}; }
 }
 const ENV = loadEnv();
+// lib/sync-db.js 等は process.env を参照するため、.env を未設定キーに反映する
+for (const [k, v] of Object.entries(ENV)) {
+  if (typeof v === "string" && v !== "" && process.env[k] === undefined) process.env[k] = v;
+}
 console.log(`✅ SECRET_ID: ${ENV.SECRET_ID ? ENV.SECRET_ID.slice(0,6)+"***" : "⚠️ 未設定"}`);
+const _dbUrl = process.env.DATABASE_URL || process.env.TURSO_DATABASE_URL || process.env.LIBSQL_URL || "";
+console.log(
+  `✅ DB: ${_dbUrl.startsWith("libsql://") ? "Turso/LibSQL リモート" : _dbUrl.startsWith("file:") ? "file" : _dbUrl ? "その他 URL" : "未設定 → data/sync.db"}`
+);
 
 // ── データ管理 ─────────────────────────────────
 function readJSON(file) {
@@ -1216,7 +1224,12 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true, ...st });
     } catch (e) {
       console.error("[local/sync-status]", e.stack || e);
-      json(res, 500, { ok: false, message: e.message || String(e) });
+      json(res, 200, {
+        ok: true,
+        hasData: false,
+        rows_total: 0,
+        dbQueryError: e.message || String(e),
+      });
     }
     return;
   }

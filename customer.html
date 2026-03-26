@@ -1186,7 +1186,26 @@ async function refreshCacheStatus() {
       headers: { Authorization: `Bearer ${Auth.getToken()}` },
     });
     const s = await res.json();
-    if (!s.ok) return;
+    if (!s.ok) {
+      el.textContent = s.message ? `⚠ ${s.message}` : "キャッシュ状態を取得できませんでした";
+      el.style.color = "rgb(180,70,50)";
+      el.title = s.message || "";
+      return;
+    }
+    if (s.dbQueryError) {
+      el.textContent = `⚠ DB接続エラー: ${String(s.dbQueryError).slice(0, 120)}${String(s.dbQueryError).length > 120 ? "…" : ""}`;
+      el.style.color = "rgb(180,70,50)";
+      el.title = String(s.dbQueryError);
+      return;
+    }
+    if (s.dbEphemeral) {
+      el.textContent = "⚠ 永続DB未接続（Vercel の DATABASE_URL / TURSO_AUTH_TOKEN を確認）";
+      el.style.color = "rgb(180,70,50)";
+      el.title = s.dbPersistenceWarning || el.textContent;
+      return;
+    }
+    el.style.color = "";
+    el.title = "";
     if (!s.hasData && !s.rows_total) {
       el.textContent = "キャッシュ未構築 → 同期が必要です";
       return;
@@ -1492,7 +1511,7 @@ function closeModal() {
   await loadVisitStatuses();
   await refreshActivePropertyQrMeta();
   document.getElementById("selScope").addEventListener("change", updateSelBtn);
-  load();
+load();
 })();
 </script>
 </body>

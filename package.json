@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "node proxy-server.js",
-    "vercel-build": "echo 'static + api'"
+    "vercel-build": "echo 'static + api'",
+    "verify-db": "node scripts/verify-db.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.883.0",
