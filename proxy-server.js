@@ -78,6 +78,7 @@ const { sendAccountInviteMail, hasSmtpEnv } = require("./lib/mailer");
 const { buildWeeklyReportBuffer } = require("./lib/weekly-report");
 const { buildCustomerAnalysisReport } = require("./lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("./lib/customer-karte-export");
+const userStore = require("./lib/user-store");
 
 const PORT = 3001;
 const API_HOST = "api.digital-eyes.jp";
@@ -131,19 +132,27 @@ function normalizeUser(u) {
   };
 }
 
-function loadUsers() {
-  const raw = readJSON("users.json");
-  const normalized = raw.map(normalizeUser);
-  try { writeJSON("users.json", normalized); } catch (_) {}
-  return normalized;
+async function loadUsers() {
+  const raw = await userStore.listUsers();
+  return raw.map(normalizeUser);
 }
 
-function saveUsers(users) {
-  writeJSON("users.json", users);
+async function saveUsers(users) {
+  const current = await userStore.listUsers();
+  const curIds = new Set(current.map((u) => String(u.id)));
+  const nextIds = new Set(users.map((u) => String(u.id)));
+  for (const id of curIds) {
+    if (!nextIds.has(id)) await userStore.deleteUserById(id);
+  }
+  for (const u of users) {
+    const id = String(u.id);
+    if (curIds.has(id)) await userStore.updateUser(u);
+    else await userStore.insertUser(u);
+  }
 }
 
-function currentUserFromSession(session) {
-  const users = loadUsers();
+async function currentUserFromSession(session) {
+  const users = await loadUsers();
   return users.find((u) => u.id === session.userId) || null;
 }
 
@@ -206,7 +215,7 @@ function readBody(req) {
 }
 
 async function getActivePropertyForUser(userId) {
-  const users = loadUsers();
+  const users = await loadUsers();
   const user = users.find((u) => u.id === userId);
   if (!user) return null;
   const propsAll = await listPropertiesByUser(user.tenantId);
@@ -256,8 +265,11 @@ const server = http.createServer(async (req, res) => {
   // ══ POST /auth/login ═══════════════════════════
   if (urlPath === "/auth/login" && req.method === "POST") {
     const { email, password } = await readBody(req);
-    const users = loadUsers();
-    const user = users.find(u => u.email === email && u.password === sha256(password));
+    const users = await loadUsers();
+    const em = String(email || "").toLowerCase().trim();
+    const user = users.find(
+      (u) => String(u.email || "").toLowerCase() === em && u.password === sha256(password)
+    );
     if (!user) { json(res, 401, { ok: false, message: "メールアドレスまたはパスワードが正しくありません" }); return; }
     const token = createSession(user.id);
     const propsAll = await listPropertiesByUser(user.tenantId);
@@ -277,7 +289,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/auth/me" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const users = loadUsers();
+    const users = await loadUsers();
     const user = users.find(u => u.id === session.userId);
     if (!user) { json(res, 401, { ok: false }); return; }
     const propsAll = await listPropertiesByUser(user.tenantId);
@@ -311,7 +323,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/client" && req.method === "GET" && fullUrl.searchParams.get("api") === "1") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const clients = await listClients(me.tenantId);
     json(res, 200, { ok: true, clients });
@@ -320,7 +332,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/client/master" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const clients = await listClients(me.tenantId);
     json(res, 200, { ok: true, clients });
@@ -331,7 +343,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/client/create" && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
       const body = await readBody(req);
@@ -347,7 +359,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/client/api/detail" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = fullUrl.searchParams.get("id");
     const c = await getClient(me.tenantId, id);
@@ -361,7 +373,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/client/edit/") && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/client/edit/".length));
     try {
@@ -378,7 +390,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/client/delete" && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const body = await readBody(req);
     const ids = body.ids || [];
@@ -391,7 +403,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/client/s3/save/") && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/client/s3/save/".length));
     try {
@@ -408,7 +420,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/client/s3/test/") && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/client/s3/test/".length));
     try {
@@ -431,7 +443,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/user/properties" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const propsAll = await listPropertiesByUser(me.tenantId);
     const props = me.role === 3 ? propsAll.filter((p) => me.propertyIds.includes(p.id)) : propsAll;
@@ -443,16 +455,19 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/user/properties" && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const { name, databaseId, databasePassword, tableName } = await readBody(req);
     if (!name || !databaseId || !tableName) { json(res, 400, { ok: false, message: "必須項目が不足しています" }); return; }
     const newProp = await createProperty(me.tenantId, { name, databaseId, databasePassword: databasePassword || "", tableName });
     // 初回追加時はアクティブに設定
-    const users = loadUsers();
+    const users = await loadUsers();
     const ui = users.findIndex(u => u.id === session.userId);
-    if (ui >= 0 && !users[ui].activePropertyId) { users[ui].activePropertyId = newProp.id; writeJSON("users.json", users); }
+    if (ui >= 0 && !users[ui].activePropertyId) {
+      users[ui].activePropertyId = newProp.id;
+      await userStore.updateUser(users[ui]);
+    }
     json(res, 200, { ok: true, property: newProp });
     return;
   }
@@ -461,7 +476,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/user/properties/") && urlPath.endsWith("/images") && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const id = urlPath.slice("/user/properties/".length, -"/images".length);
     const prop = await getPropertyByIdForUser(id, me.tenantId);
@@ -473,7 +488,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/user/properties/") && urlPath.endsWith("/history") && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const id = urlPath.slice("/user/properties/".length, -"/history".length);
     const prop = await getPropertyByIdForUser(id, me.tenantId);
@@ -485,7 +500,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/user/properties/") && urlPath.endsWith("/meta") && req.method === "PATCH") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = urlPath.slice("/user/properties/".length, -"/meta".length);
@@ -502,7 +517,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/user/properties/") && urlPath.endsWith("/images") && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = urlPath.slice("/user/properties/".length, -"/images".length);
@@ -520,7 +535,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/user/properties/") && urlPath.includes("/images/") && req.method === "DELETE") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const tail = urlPath.slice("/user/properties/".length);
@@ -542,7 +557,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const id = urlPath.replace("/user/properties/", "");
     const { name, databaseId, databasePassword, tableName } = await readBody(req);
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const existing = await getPropertyByIdForUser(id, me.tenantId);
@@ -557,18 +572,18 @@ const server = http.createServer(async (req, res) => {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
     const id = urlPath.replace("/user/properties/", "");
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     await deleteProperty(id, me.tenantId);
     // アクティブ物件が削除されたらリセット
-    const users = loadUsers();
+    const users = await loadUsers();
     const ui = users.findIndex(u => u.id === session.userId);
     if (ui >= 0 && users[ui].activePropertyId === id) {
       const remainingAll = await listPropertiesByUser(me.tenantId);
       const remaining = me.role === 3 ? remainingAll.filter((p) => me.propertyIds.includes(p.id)) : remainingAll;
       users[ui].activePropertyId = remaining.length ? remaining[0].id : null;
-      writeJSON("users.json", users);
+      await userStore.updateUser(users[ui]);
     }
     json(res, 200, { ok: true });
     return;
@@ -579,9 +594,12 @@ const server = http.createServer(async (req, res) => {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
     const { propertyId } = await readBody(req);
-    const users = loadUsers();
+    const users = await loadUsers();
     const ui = users.findIndex(u => u.id === session.userId);
-    if (ui >= 0) { users[ui].activePropertyId = propertyId; writeJSON("users.json", users); }
+    if (ui >= 0) {
+      users[ui].activePropertyId = propertyId;
+      await userStore.updateUser(users[ui]);
+    }
     json(res, 200, { ok: true });
     return;
   }
@@ -591,13 +609,13 @@ const server = http.createServer(async (req, res) => {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
     const { currentPassword, newPassword } = await readBody(req);
-    const users = loadUsers();
+    const users = await loadUsers();
     const ui = users.findIndex(u => u.id === session.userId);
     if (ui < 0 || users[ui].password !== sha256(currentPassword)) {
       json(res, 400, { ok: false, message: "現在のパスワードが正しくありません" }); return;
     }
     users[ui].password = sha256(newPassword);
-    writeJSON("users.json", users);
+    await userStore.updateUser(users[ui]);
     json(res, 200, { ok: true });
     return;
   }
@@ -606,9 +624,9 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/user/accounts" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    const users = loadUsers().filter((u) => u.tenantId === me.tenantId);
+    const users = (await loadUsers()).filter((u) => u.tenantId === me.tenantId);
     const visible = me.role === 3 ? users.filter((u) => u.id === me.id) : users;
     json(res, 200, { ok: true, accounts: visible.map(publicUser) });
     return;
@@ -617,7 +635,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/user/accounts" && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageAccounts(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const body = await readBody(req);
     const err = (m) => json(res, 400, { ok: false, message: m });
@@ -632,7 +650,7 @@ const server = http.createServer(async (req, res) => {
 
     if (!name) return err("担当者名は必須です");
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return err("E-mail が不正です");
-    const users = loadUsers();
+    const users = await loadUsers();
     if (users.some((u) => u.email.toLowerCase() === email)) return err("このE-mailは既に登録されています");
     if (![2, 3].includes(role)) return err("権限を選択してください");
     if (!client) return err("クライアントは必須です");
@@ -652,7 +670,7 @@ const server = http.createServer(async (req, res) => {
       activePropertyId: role === 3 ? propertyIds[0] || null : null,
     });
     users.push(newUser);
-    saveUsers(users);
+    await saveUsers(users);
     json(res, 200, { ok: true, account: publicUser(newUser) });
     return;
   }
@@ -661,7 +679,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/api/properties/") && urlPath.endsWith("/analysis") && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
     try {
       const head = "/api/properties/";
@@ -701,7 +719,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/api/properties/") && urlPath.endsWith("/weekly-report/download") && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
     try {
       const head = "/api/properties/";
@@ -748,11 +766,11 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/user/accounts/") && req.method === "PUT") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const id = decodeURIComponent(urlPath.slice("/user/accounts/".length));
     const body = await readBody(req);
-    const users = loadUsers();
+    const users = await loadUsers();
     const idx = users.findIndex((u) => u.id === id && u.tenantId === me.tenantId);
     if (idx < 0) { json(res, 404, { ok: false }); return; }
     if (me.role === 3 && id !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -789,7 +807,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     users[idx] = normalizeUser(next);
-    saveUsers(users);
+    await saveUsers(users);
     json(res, 200, { ok: true, account: publicUser(users[idx]) });
     return;
   }
@@ -797,12 +815,12 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/user/accounts/") && req.method === "DELETE") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageAccounts(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/user/accounts/".length));
     if (id === me.id) { json(res, 400, { ok: false, message: "自分自身は削除できません" }); return; }
-    const users = loadUsers();
-    saveUsers(users.filter((u) => !(u.id === id && u.tenantId === me.tenantId)));
+    const users = await loadUsers();
+    await saveUsers(users.filter((u) => !(u.id === id && u.tenantId === me.tenantId)));
     json(res, 200, { ok: true });
     return;
   }
@@ -810,10 +828,10 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/user/accounts/") && urlPath.endsWith("/invite") && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!canManageAccounts(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/user/accounts/".length, -"/invite".length));
-    const users = loadUsers();
+    const users = await loadUsers();
     const target = users.find((u) => u.id === id && String(u.tenantId) === String(me.tenantId));
     if (!target) { json(res, 404, { ok: false, message: "対象アカウントが見つかりません" }); return; }
     if (!target.email) { json(res, 400, { ok: false, message: "メールアドレスが未設定です" }); return; }
@@ -839,7 +857,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/media-assets" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     try {
       const result = await listMediaAssets(me.tenantId, {
@@ -874,7 +892,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/media-asset-types" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const types = await listMediaAssetTypes(me.tenantId);
     json(res, 200, { ok: true, types });
@@ -883,7 +901,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/media-asset-types" && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
@@ -898,7 +916,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/media-asset-types/") && req.method === "DELETE") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
@@ -913,7 +931,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/media-assets/presigned-url" && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
@@ -950,7 +968,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/media-assets/confirm-upload" && req.method === "POST") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
@@ -981,7 +999,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/media-assets/") && req.method === "PATCH") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
@@ -998,7 +1016,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/media-assets/") && req.method === "DELETE") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/media-assets/".length));
@@ -1057,7 +1075,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/schedule/events" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     const prop = await getActivePropertyForUser(session.userId);
     if (!me || !prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
     try {
@@ -1105,7 +1123,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath.startsWith("/schedule/events/") && req.method === "PUT") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     const prop = await getActivePropertyForUser(session.userId);
     if (!me || !prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
     const id = decodeURIComponent(urlPath.slice("/schedule/events/".length));
@@ -1269,7 +1287,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/local/customers/columns" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const targetUserId = fullUrl.searchParams.get("userId") || me.id;
     if (me.role !== 2 && targetUserId !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -1282,7 +1300,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/local/customers/columns" && req.method === "PUT") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const body = await readBody(req);
     const targetUserId = String(body.userId || me.id);
@@ -1300,7 +1318,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/local/customers/detail-fields" && req.method === "GET") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const targetUserId = fullUrl.searchParams.get("userId") || me.id;
     if (me.role !== 2 && targetUserId !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -1311,7 +1329,7 @@ const server = http.createServer(async (req, res) => {
   if (urlPath === "/local/customers/detail-fields" && req.method === "PUT") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
-    const me = currentUserFromSession(session);
+    const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (me.role !== 2) { json(res, 403, { ok: false, message: "管理者のみ設定できます" }); return; }
     const body = await readBody(req);

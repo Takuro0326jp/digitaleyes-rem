@@ -9,5 +9,16 @@
     "tenantId": "1",
     "client": "株式会社ワールド・エステート",
     "propertyIds": []
+  },
+  {
+    "id": "0b073da9-91cc-48bd-99f3-70ea56b4ffac",
+    "tenantId": "1",
+    "client": "株式会社ワールド・エステート",
+    "name": "田頭　歩",
+    "email": "a.tagashira@o-eighty.com",
+    "role": 2,
+    "propertyIds": [],
+    "password": "cbfca21a23156d48e69d86e81b4c4d7794914ee3c90fd9c6181a2540d16bd74b",
+    "activePropertyId": null
   }
 ]

@@ -1157,7 +1157,7 @@ async function load() {
       return idb.localeCompare(ida, "ja");
     });
     totalCount = parseTotalCount(data);
-    document.getElementById("totalLabel").textContent = `総件数: ${totalCount.toLocaleString()}件（ローカルDB・デジタライズへの通信なし）`;
+    document.getElementById("totalLabel").textContent = `総件数: ${totalCount.toLocaleString()}件（ローカルDB・同一メールは1件に統合・デジタライズへの通信なし）`;
     renderTable(); renderPagination();
     if (initialCid) {
       const idx = customers.findIndex((c) => String(c["c.id"] || "") === String(initialCid));

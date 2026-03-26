@@ -207,12 +207,30 @@ async function saveClientModal() {
     return;
   }
   const url = id ? `${CONFIG.API_BASE}/client/edit/${encodeURIComponent(id)}` : `${CONFIG.API_BASE}/client/create`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ name, nameKana, email }),
-  });
-  const d = await res.json();
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name, nameKana, email }),
+    });
+  } catch (e) {
+    document.getElementById("mErr").textContent = "通信に失敗しました。ネットワークを確認してください。";
+    document.getElementById("mErr").style.display = "block";
+    return;
+  }
+  const raw = await res.text();
+  let d;
+  try {
+    d = raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    document.getElementById("mErr").textContent =
+      res.status >= 400
+        ? `保存に失敗しました（HTTP ${res.status}）${raw ? `: ${raw.slice(0, 200)}` : ""}`
+        : "サーバーからの応答を解析できませんでした。";
+    document.getElementById("mErr").style.display = "block";
+    return;
+  }
   if (!d.ok) {
     document.getElementById("mErr").textContent = d.message || "保存に失敗しました";
     document.getElementById("mErr").style.display = "block";

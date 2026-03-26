@@ -82,9 +82,9 @@ const { buildWeeklyReportBuffer } = require("../lib/weekly-report");
 const { buildCustomerAnalysisReport } = require("../lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("../lib/customer-karte-export");
 const { resolveDatabaseUrl, getDb } = require("../lib/sync-db");
+const userStore = require("../lib/user-store");
 
 const API_HOST = "api.digital-eyes.jp";
-const DATA_DIR = path.join(process.cwd(), "data");
 
 function loadEnv() {
   const out = { ...process.env };
@@ -108,19 +108,6 @@ function loadEnv() {
 
 const ENV = () => loadEnv();
 
-function readJSON(file) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(DATA_DIR, file), "utf-8"));
-  } catch {
-    return [];
-  }
-}
-
-function writeJSON(file, data) {
-  const full = path.join(DATA_DIR, file);
-  fs.writeFileSync(full, JSON.stringify(data, null, 2), "utf-8");
-}
-
 function sha256(str) {
   return crypto.createHash("sha256").update(str).digest("hex");
 }
@@ -139,8 +126,8 @@ function publicUser(u) {
   };
 }
 
-function sessionMe(sessionUserId) {
-  const users = readJSON("users.json");
+async function sessionMe(sessionUserId) {
+  const users = await userStore.listUsers();
   return users.find((u) => u.id === sessionUserId) || null;
 }
 
@@ -256,7 +243,9 @@ function json(res, status, data) {
 
 function sendHtml(res, filePath) {
   try {
-    const full = path.join(process.cwd(), filePath);
+    const fromApi = path.join(__dirname, "..", filePath);
+    const fromCwd = path.join(process.cwd(), filePath);
+    const full = fs.existsSync(fromApi) ? fromApi : fromCwd;
     const html = fs.readFileSync(full);
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -271,23 +260,6 @@ function sendHtml(res, filePath) {
   }
 }
 
-function persistOrFail(res, fn) {
-  try {
-    fn();
-    return true;
-  } catch (e) {
-    if (process.env.VERCEL) {
-      json(res, 503, {
-        ok: false,
-        message:
-          "Vercel 上では data への書き込みができません。物件の追加・編集・パスワード変更はローカルで proxy-server を実行するか、リポジトリの data/*.json を編集して再デプロイしてください。",
-      });
-      return false;
-    }
-    throw e;
-  }
-}
-
 async function visiblePropertiesForUser(user) {
   if (!user) return [];
   const tk = String(user.tenantId || "1");
@@ -298,7 +270,7 @@ async function visiblePropertiesForUser(user) {
 }
 
 async function getActivePropertyForUser(userId) {
-  const users = readJSON("users.json");
+  const users = await userStore.listUsers();
   const user = users.find((u) => u.id === userId);
   if (!user) return null;
   const props = await visiblePropertiesForUser(user);
@@ -326,6 +298,7 @@ module.exports = async (req, res) => {
       return;
     }
     if (!routePath.startsWith("/")) routePath = "/" + routePath;
+    if (routePath.length > 1 && routePath.endsWith("/")) routePath = routePath.replace(/\/+$/, "");
 
     // ── GET /local/db-diag（トークン・URL は返さない。本番の DB 接続状況確認用）──
     if (routePath === "/local/db-diag" && req.method === "GET") {
@@ -376,9 +349,10 @@ module.exports = async (req, res) => {
   // ── POST /auth/login ──
   if (routePath === "/auth/login" && req.method === "POST") {
     const { email, password } = await readJsonBody(req);
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
+    const em = String(email || "").toLowerCase().trim();
     const user = users.find(
-      (u) => u.email === email && u.password === sha256(password)
+      (u) => String(u.email || "").toLowerCase() === em && u.password === sha256(password)
     );
     if (!user) {
       json(res, 401, { ok: false, message: "メールアドレスまたはパスワードが正しくありません" });
@@ -408,7 +382,7 @@ module.exports = async (req, res) => {
       json(res, 401, { ok: false });
       return;
     }
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const user = users.find((u) => u.id === session.userId);
     if (!user) {
       json(res, 401, { ok: false });
@@ -465,7 +439,7 @@ module.exports = async (req, res) => {
 
   // ── GET /user/properties ──
   if (routePath === "/user/properties" && req.method === "GET") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     const props = await visiblePropertiesForUser(me);
     json(res, 200, { ok: true, properties: props });
@@ -474,7 +448,7 @@ module.exports = async (req, res) => {
 
   // ── GET /user/accounts（schedule用: 担当者一覧） ──
   if (routePath === "/user/accounts" && req.method === "GET") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     const myTenant = String(me.tenantId || "1");
@@ -489,7 +463,7 @@ module.exports = async (req, res) => {
 
   // ── POST /user/accounts ──
   if (routePath === "/user/accounts" && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (!canManageAccounts(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -524,12 +498,12 @@ module.exports = async (req, res) => {
       activePropertyId: role === 3 ? propertyIds[0] || null : null,
     });
 
-    const ok = persistOrFail(res, () => {
-      const u2 = readJSON("users.json");
-      u2.push(newUser);
-      writeJSON("users.json", u2);
-    });
-    if (!ok) return;
+    try {
+      await userStore.insertUser(newUser);
+    } catch (e) {
+      json(res, 500, { ok: false, message: e.message || String(e) });
+      return;
+    }
     json(res, 200, { ok: true, account: publicUser(newUser) });
     return;
   }
@@ -537,7 +511,7 @@ module.exports = async (req, res) => {
   // ── PUT /user/accounts/:id ──
   if (routePath.startsWith("/user/accounts/") && !routePath.includes("/invite") && req.method === "PUT") {
     const id = decodeURIComponent(routePath.slice("/user/accounts/".length));
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     const idx = users.findIndex((u) => u.id === id && String(u.tenantId || "1") === String(me.tenantId || "1"));
@@ -577,15 +551,12 @@ module.exports = async (req, res) => {
     }
 
     const normalized = normalizeUser(next);
-    const ok = persistOrFail(res, () => {
-      const u2 = readJSON("users.json");
-      const i = u2.findIndex((u) => u.id === id);
-      if (i >= 0) {
-        u2[i] = normalized;
-        writeJSON("users.json", u2);
-      }
-    });
-    if (!ok) return;
+    try {
+      await userStore.updateUser(normalized);
+    } catch (e) {
+      json(res, 500, { ok: false, message: e.message || String(e) });
+      return;
+    }
     json(res, 200, { ok: true, account: publicUser(normalized) });
     return;
   }
@@ -593,22 +564,27 @@ module.exports = async (req, res) => {
   // ── DELETE /user/accounts/:id ──
   if (routePath.startsWith("/user/accounts/") && !routePath.includes("/invite") && req.method === "DELETE") {
     const id = decodeURIComponent(routePath.slice("/user/accounts/".length));
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (!canManageAccounts(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     if (id === me.id) { json(res, 400, { ok: false, message: "自分自身は削除できません" }); return; }
-    const ok = persistOrFail(res, () => {
-      const u2 = readJSON("users.json");
-      writeJSON("users.json", u2.filter((u) => !(u.id === id && String(u.tenantId || "1") === String(me.tenantId || "1"))));
-    });
-    if (!ok) return;
+    const victim = users.find(
+      (u) => u.id === id && String(u.tenantId || "1") === String(me.tenantId || "1")
+    );
+    if (!victim) { json(res, 404, { ok: false, message: "対象が見つかりません" }); return; }
+    try {
+      await userStore.deleteUserById(id);
+    } catch (e) {
+      json(res, 500, { ok: false, message: e.message || String(e) });
+      return;
+    }
     json(res, 200, { ok: true });
     return;
   }
 
   if (routePath.startsWith("/user/accounts/") && routePath.endsWith("/invite") && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -636,7 +612,7 @@ module.exports = async (req, res) => {
   }
 
   if (routePath === "/media-assets" && req.method === "GET") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     try {
@@ -670,7 +646,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/media-asset-types" && req.method === "GET") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     const types = await listMediaAssetTypes(String(me.tenantId || "1"));
@@ -678,7 +654,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/media-asset-types" && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -692,7 +668,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/media-asset-types/") && req.method === "DELETE") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -706,7 +682,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/media-assets/presigned-url" && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -742,7 +718,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/media-assets/confirm-upload" && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -772,7 +748,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/media-assets/") && req.method === "PATCH") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -788,7 +764,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/media-assets/") && req.method === "DELETE") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
@@ -811,7 +787,7 @@ module.exports = async (req, res) => {
 
   // ── POST /user/properties ──
   if (routePath === "/user/properties" && req.method === "POST") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const { name, databaseId, databasePassword, tableName } = await readJsonBody(req);
@@ -826,11 +802,11 @@ module.exports = async (req, res) => {
       databasePassword: databasePassword || "",
       tableName,
     });
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const ui = users.findIndex((u) => u.id === session.userId);
     if (ui >= 0 && !users[ui].activePropertyId) {
       users[ui].activePropertyId = newProp.id;
-      writeJSON("users.json", users);
+      await userStore.updateUser(users[ui]);
     }
     json(res, 200, { ok: true, property: newProp });
     return;
@@ -838,7 +814,7 @@ module.exports = async (req, res) => {
 
   // ── GET /api/properties/:id/analysis ──
   if (routePath.startsWith("/api/properties/") && routePath.endsWith("/analysis") && req.method === "GET") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
     try {
       const head = "/api/properties/";
@@ -877,7 +853,7 @@ module.exports = async (req, res) => {
 
   // ── GET /api/properties/:id/weekly-report/download ──
   if (routePath.startsWith("/api/properties/") && routePath.endsWith("/weekly-report/download") && req.method === "GET") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
     try {
       const head = "/api/properties/";
@@ -923,7 +899,7 @@ module.exports = async (req, res) => {
 
   // ── PUT /user/properties/:id ──
   if (routePath.startsWith("/user/properties/") && routePath.endsWith("/images") && req.method === "GET") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     const id = routePath.slice("/user/properties/".length, -"/images".length);
     const tk = String(me.tenantId || "1");
@@ -937,7 +913,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/user/properties/") && routePath.endsWith("/history") && req.method === "GET") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     const id = routePath.slice("/user/properties/".length, -"/history".length);
     const tk = String(me.tenantId || "1");
@@ -948,7 +924,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/user/properties/") && routePath.endsWith("/meta") && req.method === "PATCH") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = routePath.slice("/user/properties/".length, -"/meta".length);
@@ -964,7 +940,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/user/properties/") && routePath.endsWith("/images") && req.method === "POST") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = routePath.slice("/user/properties/".length, -"/images".length);
@@ -984,7 +960,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/user/properties/") && routePath.includes("/images/") && req.method === "DELETE") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const tail = routePath.slice("/user/properties/".length);
@@ -1003,7 +979,7 @@ module.exports = async (req, res) => {
 
   // ── PUT /user/properties/:id ──
   if (routePath.startsWith("/user/properties/") && req.method === "PUT") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = routePath.replace("/user/properties/", "");
@@ -1026,13 +1002,13 @@ module.exports = async (req, res) => {
 
   // ── DELETE /user/properties/:id ──
   if (routePath.startsWith("/user/properties/") && req.method === "DELETE") {
-    const me = sessionMe(session.userId);
+    const me = await sessionMe(session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = routePath.replace("/user/properties/", "");
     const tk = String(me.tenantId || "1");
     await deleteProperty(id, tk);
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const ui = users.findIndex((u) => u.id === session.userId);
     if (ui >= 0 && users[ui].activePropertyId === id) {
       const remainingAll = await listPropertiesByUser(tk);
@@ -1040,7 +1016,7 @@ module.exports = async (req, res) => {
         ? remainingAll.filter((p) => Array.isArray(me.propertyIds) && me.propertyIds.includes(p.id))
         : remainingAll;
       users[ui].activePropertyId = remaining.length ? remaining[0].id : null;
-      writeJSON("users.json", users);
+      await userStore.updateUser(users[ui]);
     }
     json(res, 200, { ok: true });
     return;
@@ -1049,15 +1025,17 @@ module.exports = async (req, res) => {
   // ── POST /user/select-property ──
   if (routePath === "/user/select-property" && req.method === "POST") {
     const { propertyId } = await readJsonBody(req);
-    const ok = persistOrFail(res, () => {
-      const users = readJSON("users.json");
+    try {
+      const users = await userStore.listUsers();
       const ui = users.findIndex((u) => u.id === session.userId);
       if (ui >= 0) {
         users[ui].activePropertyId = propertyId;
-        writeJSON("users.json", users);
+        await userStore.updateUser(users[ui]);
       }
-    });
-    if (!ok) return;
+    } catch (e) {
+      json(res, 500, { ok: false, message: e.message || String(e) });
+      return;
+    }
     json(res, 200, { ok: true });
     return;
   }
@@ -1065,17 +1043,19 @@ module.exports = async (req, res) => {
   // ── POST /user/change-password ──
   if (routePath === "/user/change-password" && req.method === "POST") {
     const { currentPassword, newPassword } = await readJsonBody(req);
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const ui = users.findIndex((u) => u.id === session.userId);
     if (ui < 0 || users[ui].password !== sha256(currentPassword)) {
       json(res, 400, { ok: false, message: "現在のパスワードが正しくありません" });
       return;
     }
-    const ok = persistOrFail(res, () => {
+    try {
       users[ui].password = sha256(newPassword);
-      writeJSON("users.json", users);
-    });
-    if (!ok) return;
+      await userStore.updateUser(users[ui]);
+    } catch (e) {
+      json(res, 500, { ok: false, message: e.message || String(e) });
+      return;
+    }
     json(res, 200, { ok: true });
     return;
   }
@@ -1104,7 +1084,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/schedule/events" && req.method === "GET") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     const prop = await getActivePropertyForUser(session.userId);
     if (!me || !prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
@@ -1138,7 +1118,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/schedule/events/") && req.method === "PUT") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     const prop = await getActivePropertyForUser(session.userId);
     if (!me || !prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
@@ -1199,7 +1179,7 @@ module.exports = async (req, res) => {
 
   // ── client routes ──
   if (routePath === "/client" && req.method === "GET" && url.searchParams.get("api") === "1") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me || Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const clients = await listClients(String(me.tenantId || "1"));
@@ -1207,7 +1187,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/client/master" && req.method === "GET") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     const clients = await listClients(String(me.tenantId || "1"));
@@ -1215,7 +1195,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/client/create" && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me || Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
@@ -1228,7 +1208,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/client/api/detail" && req.method === "GET") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me || Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = url.searchParams.get("id");
@@ -1239,7 +1219,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/client/edit/") && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me || Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(routePath.slice("/client/edit/".length));
@@ -1253,7 +1233,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/client/delete" && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me || Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const body = await readJsonBody(req);
@@ -1262,7 +1242,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/client/s3/save/") && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me || Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(routePath.slice("/client/s3/save/".length));
@@ -1276,7 +1256,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath.startsWith("/client/s3/test/") && req.method === "POST") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me || Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
@@ -1434,7 +1414,7 @@ module.exports = async (req, res) => {
 
   // ── GET/PUT /local/customers/columns ──
   if (routePath === "/local/customers/columns" && req.method === "GET") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     const targetUserId = url.searchParams.get("userId") || me.id;
@@ -1446,7 +1426,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/local/customers/columns" && req.method === "PUT") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "管理者のみ設定できます" }); return; }
@@ -1463,7 +1443,7 @@ module.exports = async (req, res) => {
 
   // ── GET/PUT /local/customers/detail-fields ──
   if (routePath === "/local/customers/detail-fields" && req.method === "GET") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     const targetUserId = url.searchParams.get("userId") || me.id;
@@ -1473,7 +1453,7 @@ module.exports = async (req, res) => {
     return;
   }
   if (routePath === "/local/customers/detail-fields" && req.method === "PUT") {
-    const users = readJSON("users.json");
+    const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me) { json(res, 401, { ok: false }); return; }
     if (Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "管理者のみ設定できます" }); return; }

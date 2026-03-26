@@ -162,8 +162,82 @@ async function deleteImage(imageId) {
   await loadImages(currentPropertyId);
 }
 
+async function renderNewPropertyForm() {
+  currentPropertyId = null;
+  currentPropertyData = null;
+  document.getElementById("content").innerHTML = `
+    <div class="page-stack">
+      <section class="panel">
+        <div class="header-top">
+          <h2 style="margin:0">物件の新規登録</h2>
+          <a class="btn btn-sm" href="property.html">一覧へ戻る</a>
+        </div>
+        <p class="meta" style="margin:12px 0;line-height:1.55">管理者のみ登録できます。保存後、詳細画面でデジタライズ連携や基本情報を編集できます。</p>
+        <dl class="detail-grid" style="margin-top:16px">
+          <dt>物件名 <span style="color:#c62828">*</span></dt><dd><input id="npName" class="field-input" placeholder="例：〇〇マンション"></dd>
+          <dt>データベースID <span style="color:#c62828">*</span></dt><dd><input id="npDatabaseId" class="field-input" autocomplete="off" placeholder="デジタライズの database id"></dd>
+          <dt>データベースパスワード</dt><dd><input id="npDatabasePassword" type="password" class="field-input" autocomplete="new-password" placeholder="任意（X_database_password）"></dd>
+          <dt>テーブル名 <span style="color:#c62828">*</span></dt><dd><input id="npTableName" class="field-input" autocomplete="off" placeholder="table_name"></dd>
+        </dl>
+        <div id="npErr" class="error-box" style="display:none;margin-top:12px"></div>
+        <div style="margin-top:18px"><button type="button" class="btn btn-primary-solid" onclick="submitNewProperty()">登録する</button></div>
+      </section>
+    </div>`;
+}
+
+async function submitNewProperty() {
+  const name = document.getElementById("npName").value.trim();
+  const databaseId = document.getElementById("npDatabaseId").value.trim();
+  const databasePassword = document.getElementById("npDatabasePassword").value;
+  const tableName = document.getElementById("npTableName").value.trim();
+  const errEl = document.getElementById("npErr");
+  errEl.style.display = "none";
+  errEl.textContent = "";
+  if (!name || !databaseId || !tableName) {
+    errEl.textContent = "物件名・データベースID・テーブル名は必須です。";
+    errEl.style.display = "block";
+    return;
+  }
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/user/properties`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name, databaseId, databasePassword, tableName }),
+    });
+    const raw = await res.text();
+    let d = {};
+    try {
+      d = raw ? JSON.parse(raw) : {};
+    } catch (_) {
+      errEl.textContent = res.status >= 400 ? `登録に失敗しました（HTTP ${res.status}）` : "応答の解析に失敗しました";
+      errEl.style.display = "block";
+      return;
+    }
+    if (!res.ok || !d.ok) {
+      errEl.textContent = d.message || `登録に失敗しました（HTTP ${res.status}）`;
+      errEl.style.display = "block";
+      return;
+    }
+    await requireAuth();
+    location.href = `property-detail.html?id=${encodeURIComponent(d.property.id)}`;
+  } catch (e) {
+    errEl.textContent = e.message || "通信に失敗しました";
+    errEl.style.display = "block";
+  }
+}
+
 async function loadDetail() {
-  const id = new URLSearchParams(location.search).get("id");
+  const params = new URLSearchParams(location.search);
+  if (params.get("new") === "1") {
+    if (!isAdmin()) {
+      document.getElementById("content").innerHTML =
+        '<div class="error-box">⚠️ 物件の新規登録は管理者のみ行えます。</div>';
+      return;
+    }
+    await renderNewPropertyForm();
+    return;
+  }
+  const id = params.get("id");
   currentPropertyId = id;
   if (!id) {
     document.getElementById("content").innerHTML = '<div class="error-box">⚠️ 物件IDが指定されていません。</div>';

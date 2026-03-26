@@ -375,9 +375,9 @@ async function loadDashboard() {
       ${showLocalSyncHint ? `
       <section class="section" style="padding-top:12px;padding-bottom:0">
         <div class="error-box" style="border-color:#e6c35c;background:#fffbeb;color:rgb(70,83,98);margin:0">
-          <strong>顧客一覧との違い</strong>
+          <strong>顧客一覧・マッピングとの違い</strong>
           <p style="margin:8px 0 0;font-size:13px;line-height:1.55">
-            この画面の集計はAPIから直接取得しています。<strong>顧客一覧</strong>は同期済みローカルDBのみ表示するため、新規物件では一覧が空でもここに数値が出ることがあります。
+            この画面の集計は<strong>デジタライズAPIから直接</strong>取得しています。一覧・マッピングは<strong>同期済みローカルDB</strong>のみを参照し、同一メールの行は<strong>1件に統合</strong>して件数表示します。新規物件では一覧が空でもここに数値が出ることがあります。
             <a href="customer.html" style="color:rgb(53,124,176);font-weight:600">顧客一覧</a>で「全件同期」を実行してください。
           </p>
         </div>
