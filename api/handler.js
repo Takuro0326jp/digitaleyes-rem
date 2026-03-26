@@ -1178,7 +1178,12 @@ module.exports = async (req, res) => {
   }
 
   // ── client routes ──
-  if (routePath === "/client" && req.method === "GET" && url.searchParams.get("api") === "1") {
+  // JSON 一覧はパスで分離（/client?api=1 はリライトでクエリが落ちると HTML が返り、フロントの res.json() が落ちてスピナーが止まらない）
+  if (
+    (routePath === "/client/api/list" ||
+      (routePath === "/client" && url.searchParams.get("api") === "1")) &&
+    req.method === "GET"
+  ) {
     const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me || Number(me.role || 2) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }

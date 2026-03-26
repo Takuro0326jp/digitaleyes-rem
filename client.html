@@ -256,8 +256,25 @@ async function confirmDelete() {
 async function load() {
   selected = new Set();
   document.getElementById("tableArea").innerHTML = '<div class="loading-spinner"></div>';
-  const res = await fetch(`${CONFIG.API_BASE}/client?api=1`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
-  const d = await res.json();
+  let res;
+  try {
+    res = await fetch(`${CONFIG.API_BASE}/client/api/list`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
+    // 古い proxy / 末尾スラッシュ差などで 404 のときは従来のクエリ付き URL にフォールバック
+    if (res.status === 404) {
+      res = await fetch(`${CONFIG.API_BASE}/client?api=1`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
+    }
+  } catch (_) {
+    document.getElementById("tableArea").innerHTML = '<div class="error-box">⚠️ 通信に失敗しました。ネットワークを確認してください。</div>';
+    return;
+  }
+  const raw = await res.text();
+  let d;
+  try {
+    d = raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ サーバーから JSON 以外の応答が返りました（HTTP ${res.status}）。再読み込みするか、管理者にお問い合わせください。</div>`;
+    return;
+  }
   if (!d.ok) { document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${d.message || "取得に失敗しました"}</div>`; return; }
   clients = d.clients || [];
   render();

@@ -103,10 +103,14 @@ for (const [k, v] of Object.entries(ENV)) {
   if (typeof v === "string" && v !== "" && process.env[k] === undefined) process.env[k] = v;
 }
 console.log(`✅ SECRET_ID: ${ENV.SECRET_ID ? ENV.SECRET_ID.slice(0,6)+"***" : "⚠️ 未設定"}`);
-const _dbUrl = process.env.DATABASE_URL || process.env.TURSO_DATABASE_URL || process.env.LIBSQL_URL || "";
-console.log(
-  `✅ DB: ${_dbUrl.startsWith("libsql://") ? "Turso/LibSQL リモート" : _dbUrl.startsWith("file:") ? "file" : _dbUrl ? "その他 URL" : "未設定 → data/sync.db"}`
-);
+const { resolveDatabaseUrl } = require("./lib/sync-db");
+const _resolvedSync = resolveDatabaseUrl();
+const _syncLabel = _resolvedSync.startsWith("libsql://")
+  ? "Turso/LibSQL（リモート・REM_USE_REMOTE_SYNC_DB 有効）"
+  : _resolvedSync.includes("memory")
+    ? "メモリ（非永続）"
+    : "ローカル data/sync.db（既定）";
+console.log(`✅ LibSQL 同期DB: ${_syncLabel}`);
 
 // ── データ管理 ─────────────────────────────────
 function readJSON(file) {
@@ -259,7 +263,9 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
-  const urlPath = req.url.split("?")[0];
+  let urlPath = req.url.split("?")[0] || "/";
+  if (!urlPath.startsWith("/")) urlPath = "/" + urlPath;
+  urlPath = urlPath.replace(/\/+$/, "") || "/";
   const fullUrl = new URL(req.url || "/", "http://127.0.0.1");
 
   // ══ POST /auth/login ═══════════════════════════
@@ -319,8 +325,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ══ GET /client (API) ═══════════════════════════
-  if (urlPath === "/client" && req.method === "GET" && fullUrl.searchParams.get("api") === "1") {
+  // ══ GET /client/api/list ／ GET /client?api=1（一覧 JSON）══════════════════
+  if (
+    (urlPath === "/client/api/list" ||
+      (urlPath === "/client" && fullUrl.searchParams.get("api") === "1")) &&
+    req.method === "GET"
+  ) {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);

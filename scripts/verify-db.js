@@ -25,6 +25,16 @@ try {
   process.exit(2);
 }
 
+// 接続確認は「.env に書いたリモート」を検証する意図が多いため、未指定ならリモート利用をオンにする
+const hasRemoteInEnv = !!(
+  process.env.DATABASE_URL ||
+  process.env.LIBSQL_URL ||
+  process.env.TURSO_DATABASE_URL
+);
+if (hasRemoteInEnv && process.env.REM_USE_REMOTE_SYNC_DB === undefined) {
+  process.env.REM_USE_REMOTE_SYNC_DB = "1";
+}
+
 const { getDb, resolveDatabaseUrl } = require("../lib/sync-db");
 const url = resolveDatabaseUrl();
 const mode = url.startsWith("libsql://")
