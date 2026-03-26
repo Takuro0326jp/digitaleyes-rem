@@ -94,6 +94,19 @@
       </div>
     </div>
 
+    <div id="qrNewRegistrationPanel" style="display:none;margin-bottom:16px;padding:14px 16px;border:1px solid rgb(224,224,224);border-radius:6px;background:rgb(250,251,252)">
+      <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+        <div>
+          <div style="font-size:12px;font-weight:600;color:rgb(70,83,98);margin-bottom:8px">新規登録用QRコード</div>
+          <div id="qrNewRegHost" style="min-height:140px;min-width:140px;display:inline-flex;align-items:center;justify-content:center"></div>
+        </div>
+        <div style="flex:1;min-width:200px">
+          <p style="margin:0 0 6px;font-size:12px;color:rgb(100,110,120)">来場者がスマホから新規登録する際にお使いください。</p>
+          <a id="qrNewRegLink" href="#" target="_blank" rel="noopener noreferrer" style="font-size:12px;word-break:break-all"></a>
+        </div>
+      </div>
+    </div>
+
     <!-- テーブル -->
     <div id="tableArea"></div>
     <div class="pagination" id="pagination"></div>
@@ -138,6 +151,19 @@
       <button class="modal-close" onclick="closeModal()">✕</button>
     </div>
     <div class="modal-body">
+      <div id="modalSurveyQrEmptyNote" style="display:none;margin-bottom:12px;padding:10px 12px;font-size:12px;line-height:1.55;color:rgb(90,98,108);background:rgb(248,249,250);border-radius:6px;border:1px solid rgb(230,232,235)"></div>
+      <div id="modalSurveyQrRow" style="display:none;margin-bottom:16px;padding:14px 16px;border:1px solid rgb(224,224,224);border-radius:6px;background:rgb(250,251,252)">
+        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+          <div>
+            <div style="font-size:12px;font-weight:600;color:rgb(70,83,98);margin-bottom:8px">ご来場アンケートQRコード</div>
+            <div id="qrSurveyHost" style="min-height:140px;min-width:140px;display:inline-flex;align-items:center;justify-content:center"></div>
+          </div>
+          <div style="flex:1;min-width:200px">
+            <p style="margin:0 0 6px;font-size:12px;color:rgb(100,110,120)">ご来場後のアンケート回答用です。下のリンクからも開けます。</p>
+            <a id="qrSurveyLink" href="#" target="_blank" rel="noopener noreferrer" style="font-size:12px;word-break:break-all;color:rgb(53,124,176)"></a>
+          </div>
+        </div>
+      </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:10px">
         <button class="btn btn-sm" id="btnDetailConfig" style="display:none" onclick="openDetailConfig()">詳細項目並び替え</button>
         <button class="btn btn-sm" onclick="exportCustomerExcel()">Excel出力</button>
@@ -186,6 +212,7 @@
 </div>
 
 <script src="common.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script>
@@ -198,6 +225,118 @@ let customers = [], totalCount = 0, currentPage = 1, selected = new Set(), showD
 let VISIT_STATUSES = [];
 let modalCustomerIdx = null;
 let modalCustomerDirty = false;
+let activePropertyQrMeta = { visitSurveyUrl: "", newRegistrationUrl: "" };
+
+/** 入力値を http(s) URL として解釈できる形にそろえる（スキーム省略時は https を付与） */
+function normalizeHttpUrl(raw) {
+  let t = String(raw || "").trim();
+  if (!t) return "";
+  if (/^\/\//.test(t)) return "https:" + t;
+  if (!/^https?:\/\//i.test(t)) {
+    if (/^mailto:/i.test(t) || /^tel:/i.test(t)) return "";
+    if (/^[a-z0-9+.-]+\.[a-z]{2,}/i.test(t) || /^localhost(?::\d+)?(\/|$)/i.test(t)) return "https://" + t;
+  }
+  return t;
+}
+
+function parseHttpUrl(raw) {
+  const t = normalizeHttpUrl(raw);
+  if (!t) return null;
+  try {
+    const u = new URL(t);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.href;
+  } catch (_) {
+    return null;
+  }
+}
+
+function fillQrHost(hostId, rawUrl) {
+  const wrap = document.getElementById(hostId);
+  if (!wrap) return false;
+  wrap.innerHTML = "";
+  const href = parseHttpUrl(rawUrl);
+  if (!href) return false;
+  if (typeof QRCode === "undefined") return false;
+  const L = QRCode.CorrectLevel || {};
+  const level = L.H != null ? L.H : L.M != null ? L.M : 0;
+  new QRCode(wrap, { text: href, width: 140, height: 140, correctLevel: level });
+  return true;
+}
+
+function updateListPageNewRegQr() {
+  const p = document.getElementById("qrNewRegistrationPanel");
+  const raw = String(activePropertyQrMeta.newRegistrationUrl || "").trim();
+  const href = parseHttpUrl(raw);
+  if (!p) return;
+  if (!href) {
+    p.style.display = "none";
+    const h = document.getElementById("qrNewRegHost");
+    if (h) h.innerHTML = "";
+    return;
+  }
+  p.style.display = "block";
+  fillQrHost("qrNewRegHost", raw);
+  const a = document.getElementById("qrNewRegLink");
+  if (a) {
+    a.href = href;
+    a.textContent = href.length > 56 ? href.slice(0, 56) + "…" : href;
+  }
+}
+
+function updateModalSurveyQr() {
+  const row = document.getElementById("modalSurveyQrRow");
+  const emptyNote = document.getElementById("modalSurveyQrEmptyNote");
+  const raw = String(activePropertyQrMeta.visitSurveyUrl || "").trim();
+  const href = parseHttpUrl(raw);
+  if (!row) return;
+  if (!href) {
+    row.style.display = "none";
+    const h = document.getElementById("qrSurveyHost");
+    if (h) h.innerHTML = "";
+    if (emptyNote) {
+      emptyNote.style.display = "block";
+      emptyNote.textContent = isAdminRole()
+        ? "アンケート用のQRコードとリンクを出すには、物件管理から該当物件の詳細を開き、「QRコード用リンク」の「ご来場アンケートURL」にアドレスを入力して保存してください。ドメインのみの入力でも自動で https:// が付きます。"
+        : "アンケート用のQRコードとリンクは、ご来場アンケートURLが物件に登録されている場合のみ表示されます。表示されない場合は管理者へお問い合わせください。";
+    }
+    return;
+  }
+  if (emptyNote) emptyNote.style.display = "none";
+  row.style.display = "block";
+  fillQrHost("qrSurveyHost", raw);
+  const a = document.getElementById("qrSurveyLink");
+  if (a) {
+    a.href = href;
+    a.textContent = href.length > 56 ? href.slice(0, 56) + "…" : href;
+  }
+}
+
+async function refreshActivePropertyQrMeta() {
+  activePropertyQrMeta = { visitSurveyUrl: "", newRegistrationUrl: "" };
+  const ap = Auth.getActiveProperty();
+  const aid = ap?.id;
+  if (!aid) {
+    updateListPageNewRegQr();
+    return;
+  }
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/user/properties`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
+    const d = await res.json();
+    if (!d.ok || !Array.isArray(d.properties)) {
+      updateListPageNewRegQr();
+      return;
+    }
+    const prop = d.properties.find((x) => String(x.id) === String(aid));
+    if (prop) {
+      activePropertyQrMeta = {
+        visitSurveyUrl: String(prop.visitSurveyUrl || "").trim(),
+        newRegistrationUrl: String(prop.newRegistrationUrl || "").trim(),
+      };
+    }
+  } catch (_) {}
+  updateListPageNewRegQr();
+}
 let modalHistoryCache = [];
 let detailFieldConfig = [];
 let detailDraft = [];
@@ -1023,7 +1162,7 @@ async function load() {
     if (initialCid) {
       const idx = customers.findIndex((c) => String(c["c.id"] || "") === String(initialCid));
       if (idx >= 0) {
-        openModal(idx);
+        await openModal(idx);
         initialCid = "";
       } else if (currentPage * LIMIT < totalCount) {
         currentPage += 1;
@@ -1087,7 +1226,19 @@ async function runSync(mode) {
 }
 
 function renderTable() {
-  if (!customers.length) { document.getElementById("tableArea").innerHTML = '<div class="empty-msg">データが見つかりませんでした</div>'; return; }
+  if (!customers.length) {
+    document.getElementById("tableArea").innerHTML = `
+      <div class="empty-msg" style="max-width:720px;line-height:1.6">
+        <p style="margin:0 0 10px;font-weight:600">データが見つかりませんでした</p>
+        <p style="margin:0 0 12px;font-size:13px;color:rgb(90,100,115)">
+          <strong>ダッシュボード</strong>の数値はデジタライズAPIから<strong>直接</strong>取得しています。
+          <strong>顧客一覧</strong>は<strong>同期済みのローカルキャッシュ</strong>だけを表示します。
+          物件を追加した直後や初回は、下の<strong>「全件同期」</strong>でこの物件の顧客を取り込んでください。
+        </p>
+        <button type="button" class="btn btn-primary-solid btn-sm" onclick="runSync('full')">全件同期を実行</button>
+      </div>`;
+    return;
+  }
   const cols = activeColumns.length ? activeColumns : [
     { key: "c.id", width: 100 }, { key: "c.name", width: 220 }, { key: "c.status", width: 140 },
     { key: "c.mail", width: 220 }, { key: "c.state", width: 120 }, { key: "c.city", width: 140 },
@@ -1265,9 +1416,10 @@ function fillLabelTemplateSheet(ws, customer, labelsByKey) {
   });
 }
 
-function openModal(idx) {
+async function openModal(idx) {
   modalCustomerIdx = idx;
   const c = customers[idx];
+  await refreshActivePropertyQrMeta();
   document.getElementById("modalTitle").textContent = `${c["c.name"]||""} ${c["c.kana"]?"（"+c["c.kana"]+"）":""}`;
   renderEditFields(c);
   bindModalDirtyTracking();
@@ -1285,6 +1437,7 @@ function openModal(idx) {
   loadCustomerFiles(c["c.id"]);
   document.getElementById("btnDetailConfig").style.display = isAdminRole() ? "inline-block" : "none";
   document.getElementById("historyHint").textContent = "";
+  updateModalSurveyQr();
   const modal = document.getElementById("modal");
   modal.style.display = "flex";
   requestAnimationFrame(() => modal.classList.add("open"));
@@ -1319,9 +1472,25 @@ function closeModal() {
       if (aData.ok) accountMaster = aData.accounts || [];
     } catch (_) {}
   }
-  await loadColumnsConfig(Auth.getUser()?.id || "");
-  await loadDetailFieldConfig();
+  try {
+    await loadColumnsConfig(Auth.getUser()?.id || "");
+  } catch (e) {
+    console.error(e);
+    availableFieldDefs = [...BASE_FIELD_DEFS];
+    activeColumns = LIST_COLS.map((x) => ({
+      key: String(x.key || ""),
+      width: 120,
+      label: String(x.label || x.key || ""),
+    })).filter((x) => x.key);
+  }
+  try {
+    await loadDetailFieldConfig();
+  } catch (e) {
+    console.error(e);
+    detailFieldConfig = [];
+  }
   await loadVisitStatuses();
+  await refreshActivePropertyQrMeta();
   document.getElementById("selScope").addEventListener("change", updateSelBtn);
   load();
 })();

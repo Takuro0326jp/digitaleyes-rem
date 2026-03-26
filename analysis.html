@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1300">
+<title>分析レポート | Real Estate Manager by DIGITALEYES</title>
+<link rel="stylesheet" href="common.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+.analysis-wrap { max-width: 1280px; margin: 0 auto; }
+.analysis-toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 16px; }
+.analysis-toolbar label { font-size: 12px; font-weight: 600; color: rgb(70,83,98); }
+.analysis-toolbar input[type="date"] { padding: 6px 10px; border: 1px solid #ced4da; font-family: inherit; }
+.kpi-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 20px; }
+@media (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
+.kpi-card { background: #fff; border: 1px solid rgb(224,224,224); border-radius: 6px; padding: 12px 14px; }
+.kpi-card .k { font-size: 11px; color: rgb(120,130,140); }
+.kpi-card .v { font-size: 22px; font-weight: 700; color: rgb(53,124,176); margin-top: 4px; }
+.kpi-card .sub { font-size: 11px; color: rgb(150,160,170); margin-top: 4px; }
+.section-analysis { background: #fff; border: 1px solid rgb(224,224,224); padding: 14px 16px; margin-bottom: 16px; border-radius: 6px; }
+.section-analysis h2 { font-size: 15px; margin: 0 0 12px; color: rgb(70,83,98); }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+.chart-box { position: relative; height: 320px; max-width: 100%; }
+.chart-box.tall { height: 380px; }
+.chart-box.short { height: 260px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th, .data-table td { border: 1px solid #e8e8e8; padding: 8px 10px; text-align: right; }
+.data-table th:first-child, .data-table td:first-child { text-align: left; }
+.note { font-size: 12px; color: rgb(120,130,140); line-height: 1.55; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div id="wrapper"><div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="page-title-bar">
+      <h1>分析レポート</h1>
+      <span id="metaLine" style="font-size:12px;color:rgb(120,130,140)"></span>
+    </div>
+    <div class="analysis-wrap">
+      <p class="note">
+        <code>customer_snapshot</code> のローカル同期データを集計します（ダッシュボードのAPI直読みとは別）。
+        生年月日・年収・媒体などは <strong>c.*</strong> 形式と仕様書の日本語キーの両方を参照します。
+      </p>
+      <div class="analysis-toolbar">
+        <div>
+          <label for="wkStart">週の開始</label><br>
+          <input type="date" id="wkStart">
+        </div>
+        <div>
+          <label for="wkEnd">週の終了</label><br>
+          <input type="date" id="wkEnd">
+        </div>
+        <div style="align-self:flex-end">
+          <button type="button" class="btn btn-primary-solid btn-sm" onclick="loadAnalysis()">再集計</button>
+        </div>
+      </div>
+      <div id="errBox" class="error-box" style="display:none;margin-bottom:16px"></div>
+      <div id="contentArea" style="display:none">
+        <div class="kpi-grid" id="kpiArea"></div>
+
+        <p class="note" style="margin:-8px 0 16px">KPI: 反響＝累計は物件登録日〜週末、週次は選択週内の <code>date_entry</code>。来場・契約はステータス名から自動分類（物件の来場ステータス設定と連動）。</p>
+
+        <div class="section-analysis">
+          <h2>認知媒体</h2>
+          <div class="chart-box"><canvas id="chMedia"></canvas></div>
+        </div>
+        <div class="section-analysis">
+          <h2>都道府県別</h2>
+          <div class="chart-box"><canvas id="chPref"></canvas></div>
+        </div>
+        <div class="two-col">
+          <div class="section-analysis">
+            <h2>住所エリア（長岡京市内）</h2>
+            <div id="tblArea"></div>
+          </div>
+          <div class="section-analysis">
+            <h2>兵庫県内 市区郡</h2>
+            <div id="tblHyogo"></div>
+          </div>
+        </div>
+        <div class="two-col">
+          <div class="section-analysis">
+            <h2>家賃帯</h2>
+            <div class="chart-box tall"><canvas id="chRent"></canvas></div>
+          </div>
+          <div class="section-analysis">
+            <h2>希望予算帯</h2>
+            <div class="chart-box tall"><canvas id="chBudget"></canvas></div>
+          </div>
+        </div>
+        <div class="two-col">
+          <div class="section-analysis">
+            <h2>希望間取り</h2>
+            <div class="chart-box tall"><canvas id="chMadori"></canvas></div>
+          </div>
+          <div class="section-analysis">
+            <h2>希望面積</h2>
+            <div class="chart-box tall"><canvas id="chMenseki"></canvas></div>
+          </div>
+        </div>
+        <div class="section-analysis">
+          <h2>駐車場希望（反響のみ・累計）</h2>
+          <div class="chart-box short" style="max-width:420px"><canvas id="chPark"></canvas></div>
+        </div>
+        <div class="section-analysis">
+          <h2>年齢帯</h2>
+          <div class="chart-box tall"><canvas id="chAge"></canvas></div>
+        </div>
+        <div class="section-analysis">
+          <h2>年収帯</h2>
+          <div class="chart-box tall"><canvas id="chIncome"></canvas></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div></div>
+<script src="common.js"></script>
+<script>
+const COL_HAN = "rgba(53,124,176,0.85)";
+const COL_RAI = "rgba(46,125,50,0.85)";
+const COL_KEI = "rgba(230,126,34,0.85)";
+const COL_MISS = "#888780";
+
+let charts = [];
+
+function destroyCharts() {
+  charts.forEach((c) => { try { c.destroy(); } catch (_) {} });
+  charts = [];
+}
+
+function toDateInputValue(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function startOfWeekMon(date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function endOfWeekMon(date) {
+  const s = startOfWeekMon(date);
+  const e = new Date(s);
+  e.setDate(e.getDate() + 6);
+  return e;
+}
+
+function defaultWeekRange() {
+  const now = new Date();
+  return {
+    start: toDateInputValue(startOfWeekMon(now)),
+    end: toDateInputValue(endOfWeekMon(now)),
+  };
+}
+
+function makeHBar(canvasId, labels, rows, limit) {
+  const slice = labels.slice(0, limit);
+  const dataRows = rows.slice(0, limit);
+  const el = document.getElementById(canvasId);
+  const chart = new Chart(el, {
+    type: "bar",
+    data: {
+      labels: slice,
+      datasets: [
+        { label: "反響（累計）", data: dataRows.map((r) => r.han_total ?? r.han ?? 0), backgroundColor: COL_HAN },
+        { label: "来場（累計）", data: dataRows.map((r) => r.rai_total ?? r.rai ?? 0), backgroundColor: COL_RAI },
+        { label: "契約（累計）", data: dataRows.map((r) => r.kei_total ?? r.kei ?? 0), backgroundColor: COL_KEI },
+      ],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: {
+          callbacks: {
+            afterBody(items) {
+              const i = items[0]?.dataIndex;
+              if (i == null) return "";
+              const r = dataRows[i];
+              const lines = [];
+              if (r.han_week != null) lines.push(`反響（週）: ${r.han_week}`);
+              if (r.rai_week != null) lines.push(`来場（週）: ${r.rai_week}`);
+              if (r.kei_week != null) lines.push(`契約（週）: ${r.kei_week}`);
+              return lines;
+            },
+          },
+        },
+      },
+      scales: { x: { beginAtZero: true, stacked: false } },
+    },
+  });
+  charts.push(chart);
+}
+
+function makeVBar(canvasId, labels, rows, limit) {
+  const slice = labels.slice(0, limit);
+  const dataRows = rows.slice(0, limit);
+  const el = document.getElementById(canvasId);
+  const chart = new Chart(el, {
+    type: "bar",
+    data: {
+      labels: slice,
+      datasets: [
+        { label: "反響", data: dataRows.map((r) => r.han ?? 0), backgroundColor: COL_HAN },
+        { label: "来場", data: dataRows.map((r) => r.rai ?? 0), backgroundColor: COL_RAI },
+        { label: "契約", data: dataRows.map((r) => r.kei ?? 0), backgroundColor: COL_KEI },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: "bottom" } },
+      scales: { y: { beginAtZero: true } },
+    },
+  });
+  charts.push(chart);
+}
+
+function makeAgeIncomeVBar(canvasId, rows, limit) {
+  const slice = rows.slice(0, limit);
+  const labels = slice.map((r) => r.label);
+  const el = document.getElementById(canvasId);
+  const chart = new Chart(el, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        { label: "反響（累計）", data: slice.map((r) => r.han_total), backgroundColor: COL_HAN },
+        { label: "来場（累計）", data: slice.map((r) => r.rai_total), backgroundColor: COL_RAI },
+        { label: "契約（累計）", data: slice.map((r) => r.kei_total), backgroundColor: COL_KEI },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: {
+          callbacks: {
+            afterBody(items) {
+              const i = items[0]?.dataIndex;
+              if (i == null) return "";
+              const r = slice[i];
+              return [`反響（週）: ${r.han_week}`, `来場（週）: ${r.rai_week}`, `契約（週）: ${r.kei_week}`];
+            },
+          },
+        },
+      },
+      scales: { y: { beginAtZero: true } },
+    },
+  });
+  charts.push(chart);
+}
+
+function makeDoughnut(canvasId, parking) {
+  const colors = parking.map((p) => (p.label === "未記入" ? COL_MISS : undefined));
+  const bg = parking.map((p, i) => colors[i] || `hsl(${(i * 47) % 360}, 55%, 62%)`);
+  const el = document.getElementById(canvasId);
+  const chart = new Chart(el, {
+    type: "doughnut",
+    data: {
+      labels: parking.map((p) => p.label),
+      datasets: [{ data: parking.map((p) => p.han), backgroundColor: bg }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: "right" } },
+    },
+  });
+  charts.push(chart);
+}
+
+function renderKpi(s) {
+  const w = s.week;
+  const t = s.total;
+  return `
+    <div class="kpi-card"><div class="k">反響（週）</div><div class="v">${w.han.toLocaleString()}</div></div>
+    <div class="kpi-card"><div class="k">来場（週）</div><div class="v">${w.raijo.toLocaleString()}</div></div>
+    <div class="kpi-card"><div class="k">契約（週）</div><div class="v">${w.keiyaku.toLocaleString()}</div></div>
+    <div class="kpi-card"><div class="k">反響（累計）</div><div class="v" style="color:rgb(46,125,50)">${t.han.toLocaleString()}</div></div>
+    <div class="kpi-card"><div class="k">来場（累計）</div><div class="v" style="color:rgb(46,125,50)">${t.raijo.toLocaleString()}</div></div>
+    <div class="kpi-card"><div class="k">契約（累計）</div><div class="v" style="color:rgb(46,125,50)">${t.keiyaku.toLocaleString()}</div>
+      <div class="sub">来場率 ${s.raijo_rate}% ／ 来場成約率 ${s.keiyaku_rate}%</div></div>
+  `;
+}
+
+function renderDimTable(id, rows, titleEmpty) {
+  const el = document.getElementById(id);
+  if (!rows.length) {
+    el.innerHTML = `<p class="note">${titleEmpty}</p>`;
+    return;
+  }
+  el.innerHTML = `<table class="data-table"><thead><tr>
+    <th>区分</th><th>反響累計</th><th>反響週</th><th>来場累計</th><th>来場週</th><th>契約累計</th>
+  </tr></thead><tbody>
+    ${rows.map((r) => `<tr>
+      <td>${escapeHtml(r.label)}</td>
+      <td>${r.han_total}</td><td>${r.han_week}</td>
+      <td>${r.rai_total}</td><td>${r.rai_week}</td><td>${r.kei_total}</td>
+    </tr>`).join("")}
+  </tbody></table>`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function loadAnalysis() {
+  const active = Auth.getActiveProperty();
+  const err = document.getElementById("errBox");
+  const content = document.getElementById("contentArea");
+  err.style.display = "none";
+  if (!active?.id) {
+    err.textContent = "ヘッダーで物件を選択してください。";
+    err.style.display = "block";
+    content.style.display = "none";
+    return;
+  }
+  const weekStart = document.getElementById("wkStart").value;
+  const weekEnd = document.getElementById("wkEnd").value;
+  if (!weekStart || !weekEnd) {
+    err.textContent = "週の開始・終了を指定してください。";
+    err.style.display = "block";
+    return;
+  }
+  try {
+    const qs = new URLSearchParams({ weekStart, weekEnd });
+    const res = await fetch(`${CONFIG.API_BASE}/api/properties/${encodeURIComponent(active.id)}/analysis?${qs}`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.message || "取得に失敗しました");
+
+    document.getElementById("metaLine").textContent =
+      `物件: ${escapeHtml(active.name || active.id)} ／ スナップショット ${d.meta?.rowCount ?? 0} 件 ／ 累計期間 ${d.meta?.totalRangeStart || ""} 〜 ${weekEnd}`;
+
+    document.getElementById("kpiArea").innerHTML = renderKpi(d.summary);
+    destroyCharts();
+
+    const limH = 14;
+    const limV = 16;
+    makeHBar("chMedia", d.media.map((x) => x.label), d.media, limH);
+    makeHBar("chPref", d.prefecture.map((x) => x.label), d.prefecture, limH);
+    renderDimTable("tblArea", d.area, "該当エリアのデータがありません（都道府県・市区の条件に合致する行のみ表示）。");
+    renderDimTable("tblHyogo", d.hyogoCities || [], "兵庫県のデータがありません。");
+    makeVBar("chRent", d.rent.map((x) => x.label), d.rent, limV);
+    makeVBar("chBudget", d.budget.map((x) => x.label), d.budget, limV);
+    makeVBar("chMadori", d.madori.map((x) => x.label), d.madori, limV);
+    makeVBar("chMenseki", d.menseki.map((x) => x.label), d.menseki, limV);
+    if (d.parking?.length) makeDoughnut("chPark", d.parking.slice(0, 12));
+    else {
+      const c = document.getElementById("chPark");
+      if (c) {
+        const g = c.getContext("2d");
+        if (g) g.clearRect(0, 0, c.width, c.height);
+      }
+    }
+    makeAgeIncomeVBar("chAge", d.age, 20);
+    makeAgeIncomeVBar("chIncome", d.income, 24);
+
+    content.style.display = "block";
+  } catch (e) {
+    err.textContent = e.message || String(e);
+    err.style.display = "block";
+    content.style.display = "none";
+  }
+}
+
+(async () => {
+  if (!await requireAuth()) return;
+  document.getElementById("header").innerHTML = renderHeader("analysis.html");
+  const r = defaultWeekRange();
+  document.getElementById("wkStart").value = r.start;
+  document.getElementById("wkEnd").value = r.end;
+  await loadAnalysis();
+})();
+</script>
+</body>
+</html>

@@ -8,10 +8,21 @@
   <style>
     .crumb { font-size:12px; color:rgb(120,130,140); margin: 14px 0 6px; }
     .crumb a { color:rgb(53,124,176); }
-    .form-card { background:#fff; border:1px solid rgb(224,224,224); padding:18px; max-width:760px; }
-    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
-    .fg label { display:block; font-size:12px; font-weight:700; margin-bottom:6px; }
-    .fg input, .fg select { width:100%; padding:8px 10px; border:1px solid #ced4da; font-family:inherit; }
+    .form-card { background:#fff; border:1px solid rgb(224,224,224); border-radius:8px; padding:22px 24px; max-width:760px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:18px 16px; }
+    .fg--full { grid-column: 1 / -1; }
+    .fg label { display:block; font-size:12px; font-weight:600; color:rgb(70,83,98); margin-bottom:8px; letter-spacing:0.02em; }
+    .fg .req { color:#c62828; font-weight:700; }
+    .fg input, .fg select {
+      width:100%; box-sizing:border-box; padding:10px 14px; border:1px solid #b8c2cc; border-radius:6px;
+      font-size:14px; font-family:inherit; color:rgb(50,60,72); background:#fff; line-height:1.4;
+      transition:border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .fg input:hover, .fg select:hover { border-color:#97a6b3; }
+    .fg input:focus, .fg select:focus {
+      outline:none; border-color:rgb(53,124,176); box-shadow:0 0 0 3px rgba(53,124,176,0.18);
+    }
+    .fg input::placeholder { color:#9aa5b1; }
     .err { color:#cc0000; font-size:12px; margin-top:6px; display:none; }
   </style>
 </head>
@@ -69,18 +80,18 @@ async function load() {
     <div class="form-card">
       <div class="grid">
         <div class="fg">
-          <label>企業名 <span style="color:#cc0000">*</span></label>
-          <input id="fName">
+          <label for="fName">企業名 <span class="req">*</span></label>
+          <input id="fName" type="text" autocomplete="organization">
           <div class="err" id="eName"></div>
         </div>
         <div class="fg">
-          <label>フリガナ <span style="color:#cc0000">*</span></label>
-          <input id="fKana">
+          <label for="fKana">フリガナ <span class="req">*</span></label>
+          <input id="fKana" type="text" autocomplete="off">
           <div class="err" id="eKana"></div>
         </div>
-        <div class="fg">
-          <label>E-mail <span style="color:#cc0000">*</span></label>
-          <input id="fEmail">
+        <div class="fg fg--full">
+          <label for="fEmail">E-mail <span class="req">*</span></label>
+          <input id="fEmail" type="email" autocomplete="email">
           <div class="err" id="eEmail"></div>
         </div>
       </div>

@@ -18,6 +18,12 @@
 .color-item { border:1px solid rgb(224,224,224); padding:10px 12px; background:#fff; }
 .color-row { display:flex; gap:10px; align-items:center; }
 .color-dot { width:12px; height:12px; border-radius:50%; display:inline-block; border:1px solid rgba(0,0,0,.2); }
+.pin-group-table-wrap { max-width: 720px; margin-top: 14px; border: 1px solid rgb(224,224,224); border-radius: 6px; max-height: 340px; overflow: auto; background: #fff; }
+.pin-group-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.pin-group-table th, .pin-group-table td { border-bottom: 1px solid rgb(230,230,230); padding: 8px 10px; text-align: left; vertical-align: middle; }
+.pin-group-table th { background: rgb(248,249,250); font-weight: 600; position: sticky; top: 0; z-index: 1; box-shadow: 0 1px 0 rgb(230,230,230); }
+.pin-group-table tr:last-child td { border-bottom: none; }
+.pin-group-table select { width: 100%; max-width: 300px; padding: 5px 8px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -48,7 +54,7 @@
     <!-- マッピング色設定 -->
     <div class="settings-section">
       <div class="section-header"><h2 class="section-heading">顧客マッピング ピン色設定</h2></div>
-      <p class="hint" style="margin-bottom:12px">顧客マッピングの凡例色・ピン色を変更できます。</p>
+      <p class="hint" style="margin-bottom:12px">顧客マッピングの凡例色・ピン色を変更できます。下の表で<strong>来場ステータスごと</strong>にどの色グループへ割り当てるか指定します（物件ごとにブラウザに保存されます）。</p>
       <div class="color-grid">
         <div class="color-item">
           <label>物件地（黒ピン）</label>
@@ -58,14 +64,14 @@
           </div>
         </div>
         <div class="color-item">
-          <label>資料請求・エントリー</label>
+          <label>資料請求・エントリー系</label>
           <div class="color-row">
             <span class="color-dot" id="previewColorRequest"></span>
             <input type="color" id="mapColorRequest" style="width:64px;padding:0;height:32px">
           </div>
         </div>
         <div class="color-item">
-          <label>新規来場</label>
+          <label>来場系</label>
           <div class="color-row">
             <span class="color-dot" id="previewColorVisit"></span>
             <input type="color" id="mapColorVisit" style="width:64px;padding:0;height:32px">
@@ -81,7 +87,16 @@
       </div>
       <div style="display:flex;gap:8px;margin-top:10px">
         <button class="btn btn-primary-solid" onclick="saveMapPinColors()">色設定を保存</button>
-        <button class="btn btn-sm" onclick="resetMapPinColors()">初期値に戻す</button>
+        <button class="btn btn-sm" onclick="resetMapPinColors()">初期色に戻す</button>
+      </div>
+      <div class="form-group" style="margin-top:20px;max-width:720px">
+        <label>ステータス別ピン分類（現在の物件）</label>
+        <p class="hint" style="margin-bottom:8px">来場ステータス一覧と同期しています。一覧を変更したあと<strong>ステータス一覧を保存</strong>し、必要ならこの表を更新してください。</p>
+        <div id="statusPinGroupTableWrap" class="pin-group-table-wrap"><p class="hint" style="padding:12px;margin:0">読み込み中…</p></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button type="button" class="btn btn-primary-solid btn-sm" onclick="saveStatusPinGroups()">ピン分類を保存</button>
+          <button type="button" class="btn btn-sm" onclick="rebuildStatusPinGroupTable()">表を再読み込み</button>
+        </div>
       </div>
     </div>
 
@@ -112,6 +127,7 @@
 <script src="common.js"></script>
 <script>
 const MAP_PIN_COLORS_KEY = "map_pin_colors_v1";
+const MAP_STATUS_PIN_GROUP_KEY = "map_status_pin_group_v1";
 const MAP_PIN_COLOR_DEFAULTS = {
   property: "#111111",
   request: "#2e7d32",
@@ -119,12 +135,93 @@ const MAP_PIN_COLOR_DEFAULTS = {
   other: "#6a1b9a",
 };
 
+function defaultPinGroupForStatus(name) {
+  const s = String(name || "").trim();
+  if (s === "資料請求・エントリー") return "request";
+  if (s === "新規来場") return "visit";
+  return "other";
+}
+function loadAllStatusPinGroupMaps() {
+  try {
+    const raw = localStorage.getItem(MAP_STATUS_PIN_GROUP_KEY);
+    const j = raw ? JSON.parse(raw) : {};
+    return j && typeof j === "object" ? j : {};
+  } catch (_) {
+    return {};
+  }
+}
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 (async () => {
   if (!await requireAuth()) return;
   document.getElementById("header").innerHTML = renderHeader("settings.html");
   await loadVisitStatusesEditor();
   loadMapPinColorsEditor();
+  await rebuildStatusPinGroupTable();
 })();
+
+async function rebuildStatusPinGroupTable() {
+  const wrap = document.getElementById("statusPinGroupTableWrap");
+  if (!wrap) return;
+  const ap = Auth.getActiveProperty();
+  const pid = ap?.id;
+  if (!pid) {
+    wrap.innerHTML = "<p class=\"hint\" style=\"padding:12px;margin:0\">物件をヘッダーで選択してください。</p>";
+    return;
+  }
+  let statuses = [];
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/local/visit-statuses`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    const d = await res.json();
+    if (d.ok && Array.isArray(d.statuses)) statuses = d.statuses;
+  } catch (_) {}
+  if (!statuses.length) {
+    wrap.innerHTML = "<p class=\"hint\" style=\"padding:12px;margin:0\">来場ステータスが取得できません。先に上記でステータスを保存してください。</p>";
+    return;
+  }
+  const allMaps = loadAllStatusPinGroupMaps();
+  const map = allMaps[pid] && typeof allMaps[pid] === "object" ? { ...allMaps[pid] } : {};
+  const opts = [
+    { v: "request", t: "資料請求・エントリー系" },
+    { v: "visit", t: "来場系" },
+    { v: "other", t: "その他" },
+  ];
+  let rows = "";
+  for (const st of statuses) {
+    const g = map[st] || defaultPinGroupForStatus(st);
+    const sel = opts.map((o) => `<option value="${o.v}"${o.v === g ? " selected" : ""}>${escapeHtml(o.t)}</option>`).join("");
+    rows += `<tr><td>${escapeHtml(st)}</td><td><select class="pin-group-sel" data-s="${encodeURIComponent(st)}">${sel}</select></td></tr>`;
+  }
+  wrap.innerHTML = `<table class="pin-group-table"><thead><tr><th style="width:42%">ステータス名</th><th>マップ上の色グループ</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function saveStatusPinGroups() {
+  const ap = Auth.getActiveProperty();
+  const pid = ap?.id;
+  if (!pid) {
+    alert("物件を選択してください");
+    return;
+  }
+  const allMaps = loadAllStatusPinGroupMaps();
+  const next = { ...(allMaps[pid] && typeof allMaps[pid] === "object" ? allMaps[pid] : {}) };
+  document.querySelectorAll("#statusPinGroupTableWrap select.pin-group-sel").forEach((sel) => {
+    const st = decodeURIComponent(sel.getAttribute("data-s") || "");
+    if (!st) return;
+    const v = sel.value;
+    if (v === "request" || v === "visit" || v === "other") next[st] = v;
+  });
+  allMaps[pid] = next;
+  localStorage.setItem(MAP_STATUS_PIN_GROUP_KEY, JSON.stringify(allMaps));
+  alert("ピン分類を保存しました。顧客マッピング画面で反映されます。");
+}
 
 function normalizeColorHex(v, fallback) {
   const s = String(v || "").trim();
@@ -220,6 +317,7 @@ async function saveVisitStatuses() {
   }
   ta.value = d.statuses.join("\n");
   alert("保存しました");
+  await rebuildStatusPinGroupTable();
 }
 
 async function changePassword() {

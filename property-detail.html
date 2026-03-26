@@ -240,6 +240,30 @@ async function loadDetail() {
           <dt>テーブル名</dt><dd><input id="fTableName" class="field-input" autocomplete="off" value="${attrEsc(p.tableName || "")}" placeholder="table_name"></dd>
         </dl>
       </section>
+
+      <section class="panel">
+        <div class="sec-head">
+          <h2>QRコード用リンク</h2>
+          <button class="btn btn-sm" data-save-kind="qr-urls" onclick="saveQrUrls()">保存</button>
+        </div>
+        <p class="meta" style="margin:0 0 12px;line-height:1.5">顧客一覧・顧客詳細に表示するQRのリンク先です。未入力の項目は画面上にQRを表示しません。</p>
+        <dl class="detail-grid">
+          <dt>ご来場アンケートURL</dt><dd><input id="fVisitSurveyUrl" type="url" inputmode="url" class="field-input" autocomplete="off" placeholder="https://..." value="${attrEsc(p.visitSurveyUrl || "")}"></dd>
+          <dt>新規登録用URL</dt><dd><input id="fNewRegistrationUrl" type="url" inputmode="url" class="field-input" autocomplete="off" placeholder="https://..." value="${attrEsc(p.newRegistrationUrl || "")}"></dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <div class="sec-head">
+          <h2>素材ギャラリー用 S3</h2>
+          <button class="btn btn-sm" data-save-kind="gallery-s3" onclick="saveGalleryS3()">保存</button>
+        </div>
+        <p class="meta" style="margin:0 0 12px;line-height:1.5">この物件向けの素材アップロード先です。ヘッダーでこの物件を選択したうえでギャラリーを利用してください。サーバーの <code>.env</code> に <code>AWS_ACCESS_KEY_ID</code> / <code>AWS_SECRET_ACCESS_KEY</code> が必要です。</p>
+        <dl class="detail-grid">
+          <dt>バケット名</dt><dd><input id="fGalleryS3Bucket" class="field-input" autocomplete="off" value="${attrEsc(p.s3BucketName || "")}"></dd>
+          <dt>リージョン</dt><dd><input id="fGalleryS3Region" class="field-input" autocomplete="off" placeholder="ap-northeast-1" value="${attrEsc(p.s3Region || "")}"></dd>
+        </dl>
+      </section>
       ` : ""}
 
       <section class="panel">
@@ -313,6 +337,34 @@ async function patchMeta(patch) {
   const d = await res.json();
   if (!res.ok || !d.ok) throw new Error(d.message || "保存に失敗しました");
   return d.property;
+}
+
+async function saveGalleryS3() {
+  if (!isAdmin()) return;
+  try {
+    await patchMeta({
+      s3BucketName: document.getElementById("fGalleryS3Bucket").value.trim(),
+      s3Region: document.getElementById("fGalleryS3Region").value.trim() || "ap-northeast-1",
+    });
+    alert("素材ギャラリー用 S3 を保存しました");
+    setPropertyDirty(false);
+    clearDirtyInputs();
+    await loadDetail();
+  } catch (e) { alert(e.message); }
+}
+
+async function saveQrUrls() {
+  if (!isAdmin()) return;
+  try {
+    await patchMeta({
+      visitSurveyUrl: document.getElementById("fVisitSurveyUrl").value.trim(),
+      newRegistrationUrl: document.getElementById("fNewRegistrationUrl").value.trim(),
+    });
+    alert("アンケート・新規登録URLを保存しました");
+    setPropertyDirty(false);
+    clearDirtyInputs();
+    await loadDetail();
+  } catch (e) { alert(e.message); }
 }
 
 async function saveDigitaleyesApi() {

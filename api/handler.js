@@ -75,9 +75,11 @@ const {
   createReadSignedUrl,
   removeObject,
 } = require("../lib/s3-media");
+const { s3ConfigFromProperty } = require("../lib/media-s3");
 const { S3Client, HeadBucketCommand } = require("@aws-sdk/client-s3");
 const { sendAccountInviteMail, hasSmtpEnv } = require("../lib/mailer");
 const { buildWeeklyReportBuffer } = require("../lib/weekly-report");
+const { buildCustomerAnalysisReport } = require("../lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("../lib/customer-karte-export");
 
 const API_HOST = "api.digital-eyes.jp";
@@ -133,14 +135,31 @@ function publicUser(u) {
     client: u.client || "",
     propertyIds: Array.isArray(u.propertyIds) ? u.propertyIds.map(String) : [],
     activePropertyId: u.activePropertyId || null,
-    s3BucketName: u.s3BucketName || "",
-    s3Region: u.s3Region || "",
   };
 }
 
 function sessionMe(sessionUserId) {
   const users = readJSON("users.json");
   return users.find((u) => u.id === sessionUserId) || null;
+}
+
+function normalizeUser(u) {
+  const role = u.role ?? u.roleId ?? 2;
+  const tenantId = u.tenantId ?? u.clientId ?? "1";
+  const client = u.client ?? "株式会社ワールド・エステート";
+  const propertyIds = Array.isArray(u.propertyIds) ? u.propertyIds.map(String) : [];
+  return {
+    ...u,
+    role: Number(role) === 3 ? 3 : 2,
+    tenantId: String(tenantId),
+    client: String(client),
+    propertyIds,
+    name: u.name || [u.lastName, u.firstName].filter(Boolean).join(" ") || "",
+  };
+}
+
+function canManageAccounts(me) {
+  return me && Number(me.role) === 2;
 }
 
 const JWT_SECRET = () =>
@@ -266,14 +285,6 @@ async function getActivePropertyForUser(userId) {
   return props.find((p) => p.id === user.activePropertyId) || null;
 }
 
-function resolveTenantS3Owner(users, me) {
-  const tenantUsers = (users || []).filter((u) => String(u.tenantId || "") === String(me.tenantId || ""));
-  const adminWithBucket = tenantUsers.find((u) => Number(u.role || 0) === 2 && u.s3BucketName);
-  if (adminWithBucket) return adminWithBucket;
-  if (me.s3BucketName) return me;
-  return null;
-}
-
 module.exports = async (req, res) => {
   try {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -359,6 +370,10 @@ module.exports = async (req, res) => {
     sendHtml(res, "customer-mapping.html");
     return;
   }
+  if (routePath === "/analysis" && req.method === "GET") {
+    sendHtml(res, "analysis.html");
+    return;
+  }
   if (routePath === "/gallery" && req.method === "GET") {
     sendHtml(res, "gallery.html");
     return;
@@ -404,15 +419,129 @@ module.exports = async (req, res) => {
     const myRole = Number(me.role || 2);
     const base = users
       .filter((u) => String(u.tenantId || "1") === myTenant)
-      .map((u) => ({
-        id: u.id,
-        name: u.name || "",
-        email: u.email || "",
-        role: Number(u.role || 2),
-        tenantId: String(u.tenantId || "1"),
-      }));
+      .map((u) => publicUser(normalizeUser(u)));
     const accounts = myRole === 3 ? base.filter((u) => u.id === me.id) : base;
     json(res, 200, { ok: true, accounts });
+    return;
+  }
+
+  // ── POST /user/accounts ──
+  if (routePath === "/user/accounts" && req.method === "POST") {
+    const users = readJSON("users.json");
+    const me = users.find((u) => u.id === session.userId);
+    if (!me) { json(res, 401, { ok: false }); return; }
+    if (!canManageAccounts(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    const body = await readJsonBody(req);
+    const err = (status, m) => json(res, status, { ok: false, message: m });
+    const name = String(body.name || "").trim();
+    const email = String(body.email || "").trim().toLowerCase();
+    const role = Number(body.role);
+    const client = String(body.client || "").trim();
+    const password = String(body.password || "");
+    const passwordConfirm = String(body.passwordConfirm || "");
+    const propertyIds = Array.isArray(body.propertyIds) ? [...new Set(body.propertyIds.map(String))] : [];
+
+    if (!name) return err(400, "担当者名は必須です");
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return err(400, "E-mail が不正です");
+    if (users.some((u) => u.email.toLowerCase() === email)) return err(400, "このE-mailは既に登録されています");
+    if (![2, 3].includes(role)) return err(400, "権限を選択してください");
+    if (!client) return err(400, "クライアントは必須です");
+    if (!password || password.length < 8) return err(400, "パスワードは8文字以上にしてください");
+    if (password !== passwordConfirm) return err(400, "パスワード（確認）が一致しません");
+    if (role === 3 && propertyIds.length === 0) return err(400, "不動産担当者は担当物件を1件以上選択してください");
+
+    const newUser = normalizeUser({
+      id: crypto.randomUUID(),
+      tenantId: me.tenantId,
+      client,
+      name,
+      email,
+      role,
+      propertyIds: role === 2 ? [] : propertyIds,
+      password: sha256(password),
+      activePropertyId: role === 3 ? propertyIds[0] || null : null,
+    });
+
+    const ok = persistOrFail(res, () => {
+      const u2 = readJSON("users.json");
+      u2.push(newUser);
+      writeJSON("users.json", u2);
+    });
+    if (!ok) return;
+    json(res, 200, { ok: true, account: publicUser(newUser) });
+    return;
+  }
+
+  // ── PUT /user/accounts/:id ──
+  if (routePath.startsWith("/user/accounts/") && !routePath.includes("/invite") && req.method === "PUT") {
+    const id = decodeURIComponent(routePath.slice("/user/accounts/".length));
+    const users = readJSON("users.json");
+    const me = users.find((u) => u.id === session.userId);
+    if (!me) { json(res, 401, { ok: false }); return; }
+    const idx = users.findIndex((u) => u.id === id && String(u.tenantId || "1") === String(me.tenantId || "1"));
+    if (idx < 0) { json(res, 404, { ok: false, message: "対象が見つかりません" }); return; }
+    if (Number(me.role || 0) === 3 && id !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    const prevRole = Number(users[idx].role || 2);
+
+    const body = await readJsonBody(req);
+    const next = { ...users[idx] };
+    const name = String(body.name ?? next.name).trim();
+    const email = String(body.email ?? next.email).trim().toLowerCase();
+    const role = body.role != null ? Number(body.role) : next.role;
+    const client = String(body.client ?? next.client).trim();
+    const propertyIds = Array.isArray(body.propertyIds) ? [...new Set(body.propertyIds.map(String))] : next.propertyIds;
+    const password = String(body.password || "");
+    const passwordConfirm = String(body.passwordConfirm || "");
+
+    if (!name) { json(res, 400, { ok: false, message: "担当者名は必須です" }); return; }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { json(res, 400, { ok: false, message: "E-mail が不正です" }); return; }
+    if (users.some((u) => u.id !== id && u.email.toLowerCase() === email)) { json(res, 400, { ok: false, message: "このE-mailは既に登録されています" }); return; }
+    if (![2, 3].includes(role)) { json(res, 400, { ok: false, message: "権限を選択してください" }); return; }
+    if (!client) { json(res, 400, { ok: false, message: "クライアントは必須です" }); return; }
+    if (role === 3 && (!propertyIds || propertyIds.length === 0)) { json(res, 400, { ok: false, message: "不動産担当者は担当物件を1件以上選択してください" }); return; }
+    if (password) {
+      if (password.length < 8) { json(res, 400, { ok: false, message: "パスワードは8文字以上にしてください" }); return; }
+      if (password !== passwordConfirm) { json(res, 400, { ok: false, message: "パスワード（確認）が一致しません" }); return; }
+      next.password = sha256(password);
+    }
+    next.name = name;
+    next.email = email;
+    next.role = role;
+    next.client = client;
+    next.propertyIds = role === 2 ? [] : propertyIds;
+    if (prevRole === 3 && role === 2) next.activePropertyId = null;
+    if (next.role === 3 && next.activePropertyId && !next.propertyIds.includes(next.activePropertyId)) {
+      next.activePropertyId = next.propertyIds[0] || null;
+    }
+
+    const normalized = normalizeUser(next);
+    const ok = persistOrFail(res, () => {
+      const u2 = readJSON("users.json");
+      const i = u2.findIndex((u) => u.id === id);
+      if (i >= 0) {
+        u2[i] = normalized;
+        writeJSON("users.json", u2);
+      }
+    });
+    if (!ok) return;
+    json(res, 200, { ok: true, account: publicUser(normalized) });
+    return;
+  }
+
+  // ── DELETE /user/accounts/:id ──
+  if (routePath.startsWith("/user/accounts/") && !routePath.includes("/invite") && req.method === "DELETE") {
+    const id = decodeURIComponent(routePath.slice("/user/accounts/".length));
+    const users = readJSON("users.json");
+    const me = users.find((u) => u.id === session.userId);
+    if (!me) { json(res, 401, { ok: false }); return; }
+    if (!canManageAccounts(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (id === me.id) { json(res, 400, { ok: false, message: "自分自身は削除できません" }); return; }
+    const ok = persistOrFail(res, () => {
+      const u2 = readJSON("users.json");
+      writeJSON("users.json", u2.filter((u) => !(u.id === id && String(u.tenantId || "1") === String(me.tenantId || "1"))));
+    });
+    if (!ok) return;
+    json(res, 200, { ok: true });
     return;
   }
 
@@ -456,11 +585,13 @@ module.exports = async (req, res) => {
         limit: url.searchParams.get("limit") || "40",
       });
       const props = await listPropertiesByUser(String(me.tenantId || "1"));
-      const owner = resolveTenantS3Owner(users, me);
       const pMap = new Map((props || []).map((p) => [p.id, p]));
+      const activeProp = await getActivePropertyForUser(session.userId);
       const data = await Promise.all((result.data || []).map(async (x) => {
-        const fileUrl = (owner && owner.s3BucketName && x.fileKey)
-          ? await createReadSignedUrl({ bucketName: owner.s3BucketName, key: x.fileKey, expiresIn: 3600 }, process.env)
+        const prop = (x.propertyId && pMap.get(x.propertyId)) || activeProp;
+        const cfg = s3ConfigFromProperty(prop, process.env);
+        const fileUrl = (cfg && x.fileKey)
+          ? await createReadSignedUrl({ bucketName: cfg.bucketName, key: x.fileKey, expiresIn: 3600, region: cfg.region }, process.env)
           : (x.fileUrl || "");
         const thumbnailUrl = String(x.mimeType || "").startsWith("image/") ? fileUrl : "";
         return {
@@ -519,21 +650,28 @@ module.exports = async (req, res) => {
     if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
       const body = await readJsonBody(req);
-      const owner = resolveTenantS3Owner(users, me);
-      if (!owner || !owner.s3BucketName) { json(res, 400, { ok: false, message: "S3バケット未設定です" }); return; }
+      const prop = await getActivePropertyForUser(session.userId);
+      const cfg = s3ConfigFromProperty(prop, process.env);
+      if (!cfg) {
+        json(res, 400, {
+          ok: false,
+          message: "アクティブ物件が無いか、この物件に S3 バケットが未設定です。物件詳細でバケットを登録し、ヘッダーで物件を選択してください。",
+        });
+        return;
+      }
       const fileName = String(body.fileName || "").trim();
       const mimeType = String(body.mimeType || "").trim();
       const fileSize = Number(body.fileSize || 0);
-      const propertyId = null;
       if (!fileName || !mimeType || !fileSize) { json(res, 400, { ok: false, message: "fileName/mimeType/fileSize は必須です" }); return; }
-      const key = buildAssetKey(propertyId, fileName);
+      const key = buildAssetKey(prop.id, fileName);
       const signed = await createUploadPresignedUrl({
-        bucketName: owner.s3BucketName,
+        bucketName: cfg.bucketName,
+        region: cfg.region,
         key,
         mimeType,
         fileSize,
         userId: me.id,
-        accountId: owner.id || me.id,
+        accountId: me.id,
       }, process.env);
       json(res, 200, { ok: true, presignedUrl: signed.presignedUrl, key });
     } catch (e) {
@@ -550,6 +688,8 @@ module.exports = async (req, res) => {
       const body = await readJsonBody(req);
       const key = String(body.key || "").trim();
       if (!key) { json(res, 400, { ok: false, message: "key は必須です" }); return; }
+      const prop = await getActivePropertyForUser(session.userId);
+      if (!prop || !prop.id) { json(res, 400, { ok: false, message: "アクティブ物件が選択されていません。ヘッダーで物件を選んでください。" }); return; }
       const created = await createMediaAssetRecord(String(me.tenantId || "1"), me.id, {
         id: crypto.randomUUID(),
         name: body.fileName || "file",
@@ -558,7 +698,7 @@ module.exports = async (req, res) => {
         fileKey: key,
         filePath: key,
         thumbnailUrl: "",
-        propertyId: null,
+        propertyId: prop.id,
         assetType: body.assetType || "other",
         tags: body.tags || [],
         memo: body.memo || "",
@@ -594,9 +734,12 @@ module.exports = async (req, res) => {
     const target = await getMediaAssetById(String(me.tenantId || "1"), id);
     if (!target) { json(res, 404, { ok: false, message: "素材が見つかりません" }); return; }
     try {
-      const owner = resolveTenantS3Owner(users, me);
-      if (owner && owner.s3BucketName && target.fileKey) {
-        await removeObject({ bucketName: owner.s3BucketName, key: target.fileKey }, process.env);
+      const tk = String(me.tenantId || "1");
+      let delProp = target.propertyId ? await getPropertyByIdForUser(String(target.propertyId), tk) : null;
+      if (!delProp) delProp = await getActivePropertyForUser(session.userId);
+      const cfg = s3ConfigFromProperty(delProp, process.env);
+      if (cfg && target.fileKey) {
+        await removeObject({ bucketName: cfg.bucketName, key: target.fileKey, region: cfg.region }, process.env);
       }
     } catch (_) {}
     await deleteMediaAsset(String(me.tenantId || "1"), id);
@@ -628,6 +771,45 @@ module.exports = async (req, res) => {
       writeJSON("users.json", users);
     }
     json(res, 200, { ok: true, property: newProp });
+    return;
+  }
+
+  // ── GET /api/properties/:id/analysis ──
+  if (routePath.startsWith("/api/properties/") && routePath.endsWith("/analysis") && req.method === "GET") {
+    const me = sessionMe(session.userId);
+    if (!me) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
+    try {
+      const head = "/api/properties/";
+      const tail = "/analysis";
+      const propertyId = decodeURIComponent(routePath.slice(head.length, -tail.length));
+      const tk = String(me.tenantId || "1");
+      const prop = await getPropertyByIdForUser(propertyId, tk);
+      if (!prop) { json(res, 404, { ok: false, message: "物件が見つかりません" }); return; }
+      if (Number(me.role || 2) === 3 && Array.isArray(me.propertyIds) && !me.propertyIds.includes(propertyId)) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+      const weekStart = String(url.searchParams.get("weekStart") || "").trim();
+      const weekEnd = String(url.searchParams.get("weekEnd") || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || !/^\d{4}-\d{2}-\d{2}$/.test(weekEnd)) {
+        json(res, 400, { ok: false, message: "weekStart/weekEnd は YYYY-MM-DD で指定してください" });
+        return;
+      }
+      if (weekStart > weekEnd) {
+        json(res, 400, { ok: false, message: "weekStart は weekEnd 以下にしてください" });
+        return;
+      }
+      const report = await buildCustomerAnalysisReport({
+        propertyId,
+        property: prop,
+        weekStart,
+        weekEnd,
+      });
+      json(res, 200, { ok: true, ...report });
+    } catch (e) {
+      console.error("[analysis]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || "分析データの取得に失敗しました" });
+    }
     return;
   }
 

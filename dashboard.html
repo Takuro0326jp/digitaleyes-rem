@@ -316,12 +316,19 @@ async function loadDashboard() {
       return;
     }
     ensureDashboardDateRange();
-    // ステータス別集計
-    const [allRows] = await Promise.all([
-      getDashboardCustomersCached(Auth.getActiveProperty()?.id),
+    const activeId = Auth.getActiveProperty()?.id;
+    const [allRows, syncRes] = await Promise.all([
+      getDashboardCustomersCached(activeId),
+      fetch(`${CONFIG.API_BASE}/local/sync-status`, {
+        headers: { Authorization: `Bearer ${Auth.getToken()}` },
+      })
+        .then((r) => r.json())
+        .catch(() => ({})),
     ]);
 
     const all = allRows || [];
+    const localRowsTotal = syncRes.ok ? Number(syncRes.rows_total || 0) : 0;
+    const showLocalSyncHint = all.length > 0 && localRowsTotal === 0;
     const recent = all
       .filter((c) => inRange(c["c.date_entry"], dashStartDate, dashEndDate))
       .sort((a, b) => normalizeYmd(b["c.date_entry"]).localeCompare(normalizeYmd(a["c.date_entry"])))
@@ -365,6 +372,16 @@ async function loadDashboard() {
       : `<div style="width:273px;height:295px;background:rgba(224,224,224,0.4);display:flex;align-items:center;justify-content:center;color:rgb(150,160,170);font-size:13px">物件画像</div>`;
 
     document.getElementById("mainContent").innerHTML = `
+      ${showLocalSyncHint ? `
+      <section class="section" style="padding-top:12px;padding-bottom:0">
+        <div class="error-box" style="border-color:#e6c35c;background:#fffbeb;color:rgb(70,83,98);margin:0">
+          <strong>顧客一覧との違い</strong>
+          <p style="margin:8px 0 0;font-size:13px;line-height:1.55">
+            この画面の集計はAPIから直接取得しています。<strong>顧客一覧</strong>は同期済みローカルDBのみ表示するため、新規物件では一覧が空でもここに数値が出ることがあります。
+            <a href="customer.html" style="color:rgb(53,124,176);font-weight:600">顧客一覧</a>で「全件同期」を実行してください。
+          </p>
+        </div>
+      </section>` : ""}
       <!-- 物件概要 -->
       <section class="section" style="padding-top:20px">
         <div class="dashboard-top">

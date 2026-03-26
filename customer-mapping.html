@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="common.css">
 <style>
 .map-top { display:flex; gap:10px; align-items:center; margin-bottom:10px; flex-wrap:wrap; }
-.status-cards { display:grid; grid-template-columns: repeat(5,minmax(120px,1fr)); gap:8px; margin-bottom:12px; }
+.status-cards { display:grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap:8px; margin-bottom:12px; max-height:240px; overflow-y:auto; padding:2px; align-content:start; }
 .status-card { border:1px solid rgb(224,224,224); padding:8px; border-radius:6px; background:#fff; }
 .status-card.clickable { cursor:pointer; user-select:none; }
 .status-card.active { border-color:rgb(53,124,176); box-shadow:0 0 0 2px rgba(53,124,176,.15) inset; }
@@ -123,9 +123,9 @@ details { margin-top:10px; }
     <section class="map-wrap">
       <div class="legend">
         <span><i class="dot black" id="legendDotProperty"></i>物件地</span>
-        <span><i class="dot green" id="legendDotRequest"></i>資料請求・エントリー</span>
-        <span><i class="dot red" id="legendDotVisit"></i>新規来場</span>
-        <span><i class="dot purple" id="legendDotOther"></i>その他ステータス</span>
+        <span><i class="dot green" id="legendDotRequest"></i>資料請求・エントリー系</span>
+        <span><i class="dot red" id="legendDotVisit"></i>来場系</span>
+        <span><i class="dot purple" id="legendDotOther"></i>その他</span>
       </div>
       <div id="map"></div>
     </section>
@@ -146,13 +146,78 @@ details { margin-top:10px; }
 <script>
 const PREFS=["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"];
 const MEDIAS=["SUUMO","Yahoo!不動産","HOMES","アットホーム","AirRESERVE","公式HP"];
-const STATUSES=["来場前アンケート","サブアン","資料請求・エントリー","来場予約","アンダーエントリー","ウェビナー回答","新規来場","再来場","再々来場1","再々来場2","再々来場3","要望","登録","申込","契約","引渡","検討中止"];
+const FALLBACK_VISIT_STATUSES = [
+  "来場前アンケート", "サブアン", "資料請求・エントリー", "来場予約", "アンダーエントリー", "ウェビナー回答",
+  "新規来場", "再来場", "再々来場1", "再々来場2", "再々来場3", "要望", "登録", "申込", "契約", "引渡", "検討中止",
+];
 const MAP_KEY_STORE="google_maps_api_key";
 const MAP_PIN_COLORS_KEY = "map_pin_colors_v1";
+const MAP_STATUS_PIN_GROUP_KEY = "map_status_pin_group_v1";
 const MAP_PIN_COLOR_DEFAULTS = { property:"#111111", request:"#2e7d32", visit:"#d84315", other:"#6a1b9a" };
+let VISIT_STATUSES_LIST = [];
 let allCustomers=[], filteredCustomers=[], map=null, geocoder=null, markers=[], infoWindow=null;
 let confirmResolver = null;
 let statusCardFilter = "";
+let statusCardsDelegationBound = false;
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function defaultPinGroupForStatus(name) {
+  const t = String(name || "").trim();
+  if (t === "資料請求・エントリー") return "request";
+  if (t === "新規来場") return "visit";
+  return "other";
+}
+function loadAllStatusPinGroupMaps() {
+  try {
+    const raw = localStorage.getItem(MAP_STATUS_PIN_GROUP_KEY);
+    const j = raw ? JSON.parse(raw) : {};
+    return j && typeof j === "object" ? j : {};
+  } catch (_) {
+    return {};
+  }
+}
+function pinColorGroupForStatus(status) {
+  const s = norm(status);
+  const pid = Auth.getActiveProperty()?.id;
+  if (pid) {
+    const all = loadAllStatusPinGroupMaps();
+    const m = all[pid];
+    if (m && typeof m === "object" && m[s]) {
+      const g = m[s];
+      if (g === "request" || g === "visit" || g === "other") return g;
+    }
+  }
+  return defaultPinGroupForStatus(s);
+}
+async function loadVisitStatusesForMapping() {
+  VISIT_STATUSES_LIST = [];
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/local/visit-statuses`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    const d = await res.json();
+    if (d.ok && Array.isArray(d.statuses) && d.statuses.length) VISIT_STATUSES_LIST = d.statuses;
+  } catch (_) {}
+}
+function bindStatusCardsClickDelegation() {
+  if (statusCardsDelegationBound) return;
+  const el = document.getElementById("cards");
+  if (!el) return;
+  statusCardsDelegationBound = true;
+  el.addEventListener("click", (ev) => {
+    const card = ev.target.closest(".status-card");
+    if (!card) return;
+    const f = card.getAttribute("data-filter");
+    if (f == null) return;
+    setStatusCardFilter(f === "__all__" ? "" : decodeURIComponent(f));
+  });
+}
 
 function multiSelectedSet(el){ try { return new Set(JSON.parse(el.dataset.selected || "[]")); } catch(_) { return new Set(); } }
 function multiSetSelected(el, values){ el.dataset.selected = JSON.stringify(values); }
@@ -216,8 +281,9 @@ function loadMapPinColors(){
 }
 function markerColor(status){
   const c = loadMapPinColors();
-  if(status==="資料請求・エントリー") return c.request;
-  if(status==="新規来場") return c.visit;
+  const g = pinColorGroupForStatus(status);
+  if (g === "request") return c.request;
+  if (g === "visit") return c.visit;
   return c.other;
 }
 function getMapKey(){return localStorage.getItem(MAP_KEY_STORE)||"";}
@@ -340,23 +406,17 @@ function clearAllFilters(){
 }
 
 function renderCards(){
-  const total=filteredCustomers.length;
-  const rsv=filteredCustomers.filter(c=>norm(c["c.status"])==="来場予約").length;
-  const newVisit=filteredCustomers.filter(c=>norm(c["c.status"])==="新規来場").length;
-  const contract=filteredCustomers.filter(c=>norm(c["c.status"])==="契約").length;
-  const req=filteredCustomers.filter(c=>norm(c["c.status"])==="資料請求・エントリー").length;
-  const defs = [
-    ["物件エントリー", total, ""],
-    ["来場予約", rsv, "来場予約"],
-    ["新規来場", newVisit, "新規来場"],
-    ["契約", contract, "契約"],
-    ["資料請求・エントリー", req, "資料請求・エントリー"],
-  ];
-  document.getElementById("cards").innerHTML = defs.map(([k,v,f])=>{
-    const active = statusCardFilter === f || (!statusCardFilter && !f);
-    const action = f ? `onclick="setStatusCardFilter('${f.replace(/'/g,"\\'")}')"` : `onclick="setStatusCardFilter('')"`;
-    return `<div class="status-card clickable ${active ? "active" : ""}" ${action}><div class="k">${k}</div><div class="v">${v}<span style="font-size:12px">件</span></div></div>`;
-  }).join("");
+  bindStatusCardsClickDelegation();
+  const total = filteredCustomers.length;
+  const statuses = VISIT_STATUSES_LIST.length ? VISIT_STATUSES_LIST : FALLBACK_VISIT_STATUSES;
+  const allActive = !statusCardFilter;
+  let html = `<div class="status-card clickable ${allActive ? "active" : ""}" data-filter="__all__"><div class="k">全件</div><div class="v">${total}<span style="font-size:12px">件</span></div></div>`;
+  for (const st of statuses) {
+    const cnt = filteredCustomers.filter((c) => norm(c["c.status"]) === st).length;
+    const active = statusCardFilter === st;
+    html += `<div class="status-card clickable ${active ? "active" : ""}" data-filter="${encodeURIComponent(st)}"><div class="k">${escapeHtml(st)}</div><div class="v">${cnt}<span style="font-size:12px">件</span></div></div>`;
+  }
+  document.getElementById("cards").innerHTML = html;
 }
 
 async function ensureMap(){
@@ -442,7 +502,9 @@ async function exportTargets(){
     location.href = "login.html";
     return;
   }
-  fillMulti("fPre",PREFS); fillMulti("fMedia",MEDIAS); fillMulti("fStatus",STATUSES);
+  await loadVisitStatusesForMapping();
+  const statusOptions = VISIT_STATUSES_LIST.length ? VISIT_STATUSES_LIST : FALLBACK_VISIT_STATUSES;
+  fillMulti("fPre",PREFS); fillMulti("fMedia",MEDIAS); fillMulti("fStatus",statusOptions);
   fillMulti("fIncome",["～200万円","～300万円","～400万円","～500万円","～600万円","～700万円","～800万円","～900万円","～1000万円","1億円以上","その他"]);
   fillMulti("fNumber",["1人","2人","3人","4人","5人","6人以上","未定"]);
   fillMulti("fBudget",["～2000万円","～3000万円","～4000万円","～5000万円","～6000万円","～7000万円","～8000万円","1億円以上","10億円以上","その他"]);

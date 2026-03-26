@@ -54,7 +54,7 @@
 | `JWT_SECRET` | **本番必須**。ログイン用トークンの署名鍵。32 文字以上のランダム文字列（推奨）。 |
 | `SECRET_ID` | デジタライズ API のシークレット ID（ローカルの `.env` と同じ）。 |
 | `SECRET_PASSWORD` | デジタライズ API のシークレットパスワード。 |
-| `DATABASE_URL` / `TURSO_DATABASE_URL` | **顧客キャッシュ用 LibSQL**（推奨: [Turso](https://turso.tech/) の `libsql://...`）。Vercel 本番では未設定だと DB が開けず `500` になります。 |
+| `DATABASE_URL` / `TURSO_DATABASE_URL` | **推奨**。[Turso](https://turso.tech/) の `libsql://...`。顧客キャッシュ・永続データ用。**未設定時**はメモリ内 DB にフォールバックしログインは可能だが、同期データはサーバー再起動で消えます。 |
 | `TURSO_AUTH_TOKEN` / `TURSO_API_TOKEN` | Turso を使うときのトークン（ダッシュボードで発行）。 |
 
 **Production / Preview / Development** のどれに付けるかは用途に合わせて選びます。少なくとも **Production** には入れてください。

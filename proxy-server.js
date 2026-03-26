@@ -67,15 +67,16 @@ const {
   deleteMediaAssetType,
 } = require("./lib/media-assets-store");
 const {
-  createAccountBucket,
   buildAssetKey,
   createUploadPresignedUrl,
   createReadSignedUrl,
   removeObject,
 } = require("./lib/s3-media");
+const { s3ConfigFromProperty } = require("./lib/media-s3");
 const { S3Client, HeadBucketCommand } = require("@aws-sdk/client-s3");
 const { sendAccountInviteMail, hasSmtpEnv } = require("./lib/mailer");
 const { buildWeeklyReportBuffer } = require("./lib/weekly-report");
+const { buildCustomerAnalysisReport } = require("./lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("./lib/customer-karte-export");
 
 const PORT = 3001;
@@ -148,8 +149,6 @@ function publicUser(u) {
     client: u.client,
     propertyIds: u.propertyIds || [],
     activePropertyId: u.activePropertyId || null,
-    s3BucketName: u.s3BucketName || "",
-    s3Region: u.s3Region || "",
   };
 }
 
@@ -159,14 +158,6 @@ function canManageAccounts(me) {
 
 function canManageClients(me) {
   return me && me.role === 2;
-}
-
-function resolveTenantS3Owner(users, me) {
-  const tenantUsers = (users || []).filter((u) => String(u.tenantId || "") === String(me.tenantId || ""));
-  const adminWithBucket = tenantUsers.find((u) => Number(u.role || 0) === 2 && u.s3BucketName);
-  if (adminWithBucket) return adminWithBucket;
-  if (me.s3BucketName) return me;
-  return null;
 }
 
 // ── セッション管理（メモリ） ───────────────────
@@ -233,6 +224,7 @@ const HTML_PAGE_ALIASES = {
   "/settings": "/settings.html",
   "/customer": "/customer.html",
   "/customer/map": "/customer-mapping.html",
+  "/analysis": "/analysis.html",
   "/property": "/property.html",
   "/property-detail": "/property-detail.html",
   "/account": "/account.html",
@@ -651,19 +643,49 @@ const server = http.createServer(async (req, res) => {
       password: sha256(password),
       activePropertyId: role === 3 ? propertyIds[0] || null : null,
     });
-    if (Number(newUser.role || 0) === 2) {
-      try {
-        const out = await createAccountBucket(newUser.id, process.env);
-        newUser.s3BucketName = out.bucketName;
-        newUser.s3Region = out.region;
-      } catch (e) {
-        json(res, 400, { ok: false, message: `S3バケット作成に失敗しました: ${e.message || e}` });
-        return;
-      }
-    }
     users.push(newUser);
     saveUsers(users);
     json(res, 200, { ok: true, account: publicUser(newUser) });
+    return;
+  }
+
+  // ══ GET /api/properties/:propertyId/analysis ═══════════════════
+  if (urlPath.startsWith("/api/properties/") && urlPath.endsWith("/analysis") && req.method === "GET") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
+    const me = currentUserFromSession(session);
+    if (!me) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
+    try {
+      const head = "/api/properties/";
+      const tail = "/analysis";
+      const propertyId = decodeURIComponent(urlPath.slice(head.length, -tail.length));
+      const prop = await getPropertyByIdForUser(propertyId, me.tenantId);
+      if (!prop) { json(res, 404, { ok: false, message: "物件が見つかりません" }); return; }
+      if (me.role === 3 && Array.isArray(me.propertyIds) && !me.propertyIds.includes(propertyId)) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+      const weekStart = String(fullUrl.searchParams.get("weekStart") || "").trim();
+      const weekEnd = String(fullUrl.searchParams.get("weekEnd") || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || !/^\d{4}-\d{2}-\d{2}$/.test(weekEnd)) {
+        json(res, 400, { ok: false, message: "weekStart/weekEnd は YYYY-MM-DD で指定してください" });
+        return;
+      }
+      if (weekStart > weekEnd) {
+        json(res, 400, { ok: false, message: "weekStart は weekEnd 以下にしてください" });
+        return;
+      }
+      const report = await buildCustomerAnalysisReport({
+        propertyId,
+        property: prop,
+        weekStart,
+        weekEnd,
+      });
+      json(res, 200, { ok: true, ...report });
+    } catch (e) {
+      console.error("[analysis]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || "分析データの取得に失敗しました" });
+    }
     return;
   }
 
@@ -726,6 +748,7 @@ const server = http.createServer(async (req, res) => {
     const idx = users.findIndex((u) => u.id === id && u.tenantId === me.tenantId);
     if (idx < 0) { json(res, 404, { ok: false }); return; }
     if (me.role === 3 && id !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    const prevRole = Number(users[idx].role || 2);
 
     const next = { ...users[idx] };
     const name = String(body.name ?? next.name).trim();
@@ -752,7 +775,7 @@ const server = http.createServer(async (req, res) => {
     next.role = role;
     next.client = client;
     next.propertyIds = role === 2 ? [] : propertyIds;
-    if (next.role === 2) next.activePropertyId = null;
+    if (prevRole === 3 && role === 2) next.activePropertyId = null;
     if (next.role === 3 && next.activePropertyId && !next.propertyIds.includes(next.activePropertyId)) {
       next.activePropertyId = next.propertyIds[0] || null;
     }
@@ -818,12 +841,13 @@ const server = http.createServer(async (req, res) => {
         limit: fullUrl.searchParams.get("limit") || "40",
       });
       const props = await listPropertiesByUser(me.tenantId);
-      const users = loadUsers();
-      const owner = resolveTenantS3Owner(users, me);
       const pMap = new Map((props || []).map((p) => [p.id, p]));
+      const activeProp = await getActivePropertyForUser(session.userId);
       const data = await Promise.all((result.data || []).map(async (x) => {
-        const fileUrl = (owner && owner.s3BucketName && x.fileKey)
-          ? await createReadSignedUrl({ bucketName: owner.s3BucketName, key: x.fileKey, expiresIn: 3600 }, process.env)
+        const prop = (x.propertyId && pMap.get(x.propertyId)) || activeProp;
+        const cfg = s3ConfigFromProperty(prop, process.env);
+        const fileUrl = (cfg && x.fileKey)
+          ? await createReadSignedUrl({ bucketName: cfg.bucketName, key: x.fileKey, expiresIn: 3600, region: cfg.region }, process.env)
           : (x.fileUrl || "");
         const thumbnailUrl = String(x.mimeType || "").startsWith("image/") ? fileUrl : "";
         return {
@@ -886,22 +910,28 @@ const server = http.createServer(async (req, res) => {
     if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
       const body = await readBody(req);
-      const users = loadUsers();
-      const owner = resolveTenantS3Owner(users, me);
-      if (!owner || !owner.s3BucketName) { json(res, 400, { ok: false, message: "S3バケット未設定です" }); return; }
+      const prop = await getActivePropertyForUser(session.userId);
+      const cfg = s3ConfigFromProperty(prop, process.env);
+      if (!cfg) {
+        json(res, 400, {
+          ok: false,
+          message: "アクティブ物件が無いか、この物件に S3 バケットが未設定です。物件詳細でバケットを登録し、ヘッダーで物件を選択してください。",
+        });
+        return;
+      }
       const fileName = String(body.fileName || "").trim();
       const mimeType = String(body.mimeType || "").trim();
       const fileSize = Number(body.fileSize || 0);
-      const propertyId = null;
       if (!fileName || !mimeType || !fileSize) { json(res, 400, { ok: false, message: "fileName/mimeType/fileSize は必須です" }); return; }
-      const key = buildAssetKey(propertyId, fileName);
+      const key = buildAssetKey(prop.id, fileName);
       const signed = await createUploadPresignedUrl({
-        bucketName: owner.s3BucketName,
+        bucketName: cfg.bucketName,
+        region: cfg.region,
         key,
         mimeType,
         fileSize,
         userId: me.id,
-        accountId: owner.id || me.id,
+        accountId: me.id,
       }, process.env);
       json(res, 200, { ok: true, presignedUrl: signed.presignedUrl, key });
     } catch (e) {
@@ -919,6 +949,8 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const key = String(body.key || "").trim();
       if (!key) { json(res, 400, { ok: false, message: "key は必須です" }); return; }
+      const prop = await getActivePropertyForUser(session.userId);
+      if (!prop || !prop.id) { json(res, 400, { ok: false, message: "アクティブ物件が選択されていません。ヘッダーで物件を選んでください。" }); return; }
       const created = await createMediaAssetRecord(me.tenantId, me.id, {
         id: crypto.randomUUID(),
         name: body.fileName || "file",
@@ -927,7 +959,7 @@ const server = http.createServer(async (req, res) => {
         fileKey: key,
         filePath: key,
         thumbnailUrl: "",
-        propertyId: null,
+        propertyId: prop.id,
         assetType: body.assetType || "other",
         tags: body.tags || [],
         memo: body.memo || "",
@@ -965,10 +997,11 @@ const server = http.createServer(async (req, res) => {
     const target = await getMediaAssetById(me.tenantId, id);
     if (!target) { json(res, 404, { ok: false, message: "素材が見つかりません" }); return; }
     try {
-      const users = loadUsers();
-      const owner = resolveTenantS3Owner(users, me);
-      if (owner && owner.s3BucketName && target.fileKey) {
-        await removeObject({ bucketName: owner.s3BucketName, key: target.fileKey }, process.env);
+      let delProp = target.propertyId ? await getPropertyByIdForUser(String(target.propertyId), me.tenantId) : null;
+      if (!delProp) delProp = await getActivePropertyForUser(session.userId);
+      const cfg = s3ConfigFromProperty(delProp, process.env);
+      if (cfg && target.fileKey) {
+        await removeObject({ bucketName: cfg.bucketName, key: target.fileKey, region: cfg.region }, process.env);
       }
     } catch (_) {}
     await deleteMediaAsset(me.tenantId, id);

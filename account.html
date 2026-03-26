@@ -250,12 +250,30 @@ async function loadAll() {
   renderTable();
 }
 
+function escapeHtmlAttr(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
+}
 function renderClientSelect(selected = "") {
   const el = document.getElementById("fClient");
   if (!el) return;
-  const options = clientsMaster.map((c) => `<option value="${c.name}">${c.name}</option>`).join("");
-  el.innerHTML = `<option value="">選択してください</option>${options}`;
-  if (selected) el.value = selected;
+  const sel = String(selected || "").trim();
+  const names = new Set((clientsMaster || []).map((c) => String(c.name || "").trim()).filter(Boolean));
+  let extra = "";
+  if (sel && !names.has(sel)) {
+    extra = `<option value="${escapeHtmlAttr(sel)}">${escapeHtmlAttr(sel)}</option>`;
+  }
+  const options = (clientsMaster || [])
+    .map((c) => {
+      const n = String(c.name || "").trim();
+      if (!n) return "";
+      return `<option value="${escapeHtmlAttr(n)}">${escapeHtmlAttr(n)}</option>`;
+    })
+    .join("");
+  el.innerHTML = `<option value="">選択してください</option>${options}${extra}`;
+  if (sel) el.value = sel;
 }
 
 function resetErrors() {
@@ -279,10 +297,11 @@ function onRoleChange() {
 }
 
 function renderPropChecks(selected) {
+  const sel = (selected || []).map((x) => String(x));
   const wrap = document.getElementById("propChecks");
   wrap.innerHTML = "";
   props.forEach(p => {
-    const checked = selected.includes(p.id);
+    const checked = sel.includes(String(p.id));
     const id = `prop_${p.id}`;
     wrap.innerHTML += `<label><input type="checkbox" id="${id}" value="${p.id}" ${checked?"checked":""}>${safePropName(p)}</label>`;
   });
@@ -356,21 +375,34 @@ async function saveAccount() {
   const payload = { name, email, role: Number(role), client, propertyIds, password, passwordConfirm };
   const url = id ? `${CONFIG.API_BASE}/user/accounts/${encodeURIComponent(id)}` : `${CONFIG.API_BASE}/user/accounts`;
   const method = id ? "PUT" : "POST";
-  const res = await fetch(url, {
-    method,
-    headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const d = await res.json();
-  if (!d.ok) {
-    document.getElementById("formMsg").textContent = d.message || "保存に失敗しました";
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    let d = {};
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      d = await res.json();
+    } else {
+      const text = await res.text();
+      throw new Error(text.slice(0, 200) || `HTTP ${res.status}`);
+    }
+    if (!d.ok) {
+      document.getElementById("formMsg").textContent = d.message || `保存に失敗しました（${res.status}）`;
+      document.getElementById("formMsg").style.display = "block";
+      return;
+    }
+    closeEdit();
+    await requireAuth();
+    currentPage = getPageFromUrl();
+    await loadAll();
+  } catch (e) {
+    console.error(e);
+    document.getElementById("formMsg").textContent = e.message || "通信エラー：ネットワークまたはサーバーを確認してください";
     document.getElementById("formMsg").style.display = "block";
-    return;
   }
-  closeEdit();
-  await requireAuth(); // 自分を編集した場合に role/props を反映
-  currentPage = getPageFromUrl();
-  await loadAll();
 }
 
 function openDelete(id) {

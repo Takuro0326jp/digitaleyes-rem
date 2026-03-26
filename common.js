@@ -86,6 +86,7 @@ function renderHeader(currentPage) {
     { label: "ダッシュボード", href: "dashboard.html" },
     { label: "顧客一覧", href: "customer.html" },
     { label: "顧客マッピング", href: "customer-mapping.html" },
+    { label: "分析レポート", href: "analysis.html" },
     { label: "ポータル管理", href: "ad.html" },
     { label: "接客スケジュール", href: "schedule.html" },
     { label: "物件管理", href: "property.html" },
@@ -140,6 +141,11 @@ async function chooseProperty(propertyId) {
 }
 async function onPropertyChange(propertyId) {
   await selectProperty(propertyId);
+  const pageFile = (location.pathname.split("/").pop() || "").toLowerCase();
+  if (pageFile === "property-detail.html") {
+    location.href = `property-detail.html?id=${encodeURIComponent(propertyId)}`;
+    return;
+  }
   location.reload();
 }
 if (typeof document !== "undefined") {
