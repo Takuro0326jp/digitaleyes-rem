@@ -517,6 +517,44 @@ function setColLabel(key, v) {
   if (!x) return;
   x.label = String(v || "").trim() || fieldLabelOf(key);
 }
+
+function defaultDetailRowFromListColumn(col) {
+  const key = String(col.key || "");
+  const base = CUSTOMER_FIELDS.find((f) => f.key === key);
+  return {
+    key,
+    label: String(col.label || "").trim() || fieldLabelOf(col),
+    display: 1,
+    print: 1,
+    oneLine: base && base.full ? 0 : 1,
+    width: Math.max(80, Math.min(600, Number(col.width || 160))),
+  };
+}
+
+function mergeListColumnsIntoDetailFields(existingFields, columns) {
+  const out = (existingFields || [])
+    .map((x) => ({ ...x, key: String(x.key || "") }))
+    .filter((x) => x.key);
+  const seen = new Set(out.map((x) => x.key));
+  for (const col of columns || []) {
+    const k = String(col.key || "");
+    if (!k || seen.has(k)) continue;
+    out.push(defaultDetailRowFromListColumn(col));
+    seen.add(k);
+  }
+  return out;
+}
+
+async function fetchDetailFieldConfigForUser(userId) {
+  const qs = new URLSearchParams({ userId: String(userId || "") });
+  const res = await fetch(`${CONFIG.API_BASE}/local/customers/detail-fields?${qs}`, {
+    headers: { Authorization: `Bearer ${Auth.getToken()}` },
+  });
+  const d = await res.json();
+  if (!res.ok || !d.ok) throw new Error(d.message || "詳細項目設定の取得に失敗しました");
+  return d.fields || [];
+}
+
 async function saveColConfig() {
   if (!isAdminRole()) return;
   if (!colDraft.length) { alert("列を1つ以上選択してください"); return; }
@@ -528,6 +566,73 @@ async function saveColConfig() {
   const d = await res.json();
   if (!res.ok || !d.ok) { alert(d.message || "保存に失敗しました"); return; }
   activeColumns = d.columns || colDraft;
+  // #region agent log
+  fetch("http://127.0.0.1:7810/ingest/12bccbbc-9be9-48dc-b070-80fe886b58b9", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "202a69" },
+    body: JSON.stringify({
+      sessionId: "202a69",
+      runId: "list-detail-sync",
+      hypothesisId: "H1",
+      location: "customer.html:saveColConfig",
+      message: "columns saved; starting detail-fields merge",
+      data: { colTargetUserId: String(colTargetUserId || ""), listKeyCount: colDraft.length },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+  try {
+    const existingDetail = await fetchDetailFieldConfigForUser(colTargetUserId);
+    const mergedDetail = mergeListColumnsIntoDetailFields(existingDetail, colDraft);
+    const res2 = await fetch(`${CONFIG.API_BASE}/local/customers/detail-fields`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: colTargetUserId, fields: mergedDetail }),
+    });
+    const d2 = await res2.json();
+    // #region agent log
+    fetch("http://127.0.0.1:7810/ingest/12bccbbc-9be9-48dc-b070-80fe886b58b9", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "202a69" },
+      body: JSON.stringify({
+        sessionId: "202a69",
+        runId: "list-detail-sync",
+        hypothesisId: "H2",
+        location: "customer.html:saveColConfig",
+        message: "detail-fields PUT after list merge",
+        data: {
+          ok: !!(res2.ok && d2.ok),
+          existingDetailCount: existingDetail.length,
+          mergedDetailCount: mergedDetail.length,
+          selfUser: String(Auth.getUser()?.id || "") === String(colTargetUserId || ""),
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+    if (!res2.ok || !d2.ok) {
+      alert(d2.message || "一覧は保存できましたが、詳細項目への反映に失敗しました。詳細の表示項目設定を確認してください。");
+    } else if (String(Auth.getUser()?.id) === String(colTargetUserId)) {
+      detailFieldConfig = d2.fields || mergedDetail;
+    }
+  } catch (e) {
+    // #region agent log
+    fetch("http://127.0.0.1:7810/ingest/12bccbbc-9be9-48dc-b070-80fe886b58b9", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "202a69" },
+      body: JSON.stringify({
+        sessionId: "202a69",
+        runId: "list-detail-sync",
+        hypothesisId: "H3",
+        location: "customer.html:saveColConfig",
+        message: "detail-fields merge threw",
+        data: { err: String(e && e.message ? e.message : e) },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+    alert(`一覧は保存できましたが、詳細項目への反映でエラーが発生しました: ${e.message || e}`);
+  }
   closeColConfig();
   renderTable();
 }

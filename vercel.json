@@ -6,7 +6,7 @@
   "functions": {
     "api/handler.js": {
       "maxDuration": 120,
-      "includeFiles": ["*.html", "data/**"]
+      "includeFiles": "{*.html,data/**}"
     }
   },
   "rewrites": [
