@@ -2,5 +2,5 @@
 .vercel
 node_modules/
 .DS_Store
-data/sync.db
+# SQLite ジャーナルはコミットしない
 data/sync.db-journal
