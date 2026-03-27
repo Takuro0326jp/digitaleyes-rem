@@ -23,11 +23,13 @@ const {
   saveCustomerListColumns,
   DEFAULT_CUSTOMER_COLUMNS,
   listCustomerAvailableFields,
+  getCustomerSpecFieldDefs,
   getCustomerDetailFieldConfig,
   saveCustomerDetailFieldConfig,
   DEFAULT_CUSTOMER_DETAIL_FIELDS,
   DEFAULT_VISIT_STATUSES,
 } = require("./lib/sync-service");
+const { CUSTOMER_SNAPSHOT_FIELDS } = require("./lib/customer-fields");
 const {
   listPropertiesByUser,
   getPropertyByIdForUser,
@@ -79,7 +81,13 @@ const {
 } = require("./lib/s3-media");
 const { s3ConfigFromProperty } = require("./lib/media-s3");
 const { S3Client, HeadBucketCommand } = require("@aws-sdk/client-s3");
-const { sendAccountInviteMail, sendSmtpTestMail, sendLoginOtpMail, hasSmtpEnv } = require("./lib/mailer");
+const {
+  sendAccountInviteMail,
+  sendSmtpTestMail,
+  sendLoginOtpMail,
+  sendPasswordResetMail,
+  hasSmtpEnv,
+} = require("./lib/mailer");
 const { buildWeeklyReportBuffer } = require("./lib/weekly-report");
 const { buildCustomerAnalysisReport } = require("./lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("./lib/customer-karte-export");
@@ -267,6 +275,39 @@ function randomTempPassword(len = 12) {
   return s;
 }
 
+/** パスワード再設定ページ URL（api/handler の resolvePasswordResetBaseUrl と同規則） */
+function resolvePasswordResetBaseUrlProxy(req, body) {
+  let login = String(body.loginUrl || body.resetBaseUrl || ENV.APP_LOGIN_URL || "").trim();
+  if (login) {
+    try {
+      const x = new URL(login);
+      let path = String(x.pathname || "").replace(/\/login\.html?$/i, "/reset-password.html");
+      if (!/\/reset-password\.html$/i.test(path)) path = "/reset-password.html";
+      return `${x.origin}${path}`;
+    } catch (_) {}
+  }
+  const origin = String(req.headers.origin || "").trim();
+  if (origin) {
+    try {
+      return `${new URL(origin).origin}/reset-password.html`;
+    } catch (_) {}
+  }
+  const ref = String(req.headers.referer || "").trim();
+  if (ref) {
+    try {
+      return `${new URL(ref).origin}/reset-password.html`;
+    } catch (_) {}
+  }
+  const og = String(body.origin || "").trim();
+  if (og) {
+    try {
+      const base = /^https?:\/\//i.test(og) ? og : `https://${og}`;
+      return `${new URL(base).origin}/reset-password.html`;
+    } catch (_) {}
+  }
+  return "";
+}
+
 // ── ルーティングヘルパー ────────────────────────
 function getToken(req) {
   const auth = req.headers["authorization"] || "";
@@ -309,6 +350,8 @@ const MIME = {
 /** 拡張子なしURL → .html（例: /settings → settings.html） */
 const HTML_PAGE_ALIASES = {
   "/login": "/login.html",
+  "/forgot-password": "/forgot-password.html",
+  "/reset-password": "/reset-password.html",
   "/dashboard": "/dashboard.html",
   "/settings": "/settings.html",
   "/customer": "/customer.html",
@@ -389,6 +432,88 @@ const server = http.createServer(async (req, res) => {
     const propsAll = await listPropertiesByUser(user.tenantId);
     const props = visiblePropsForUser(user, propsAll);
     json(res, 200, { ok: true, token, user: publicUser(user), properties: props });
+    return;
+  }
+
+  if (urlPath === "/auth/forgot-password" && req.method === "POST") {
+    const body = await readBody(req);
+    const email = String(body.email || "").toLowerCase().trim();
+    const genericOk = {
+      ok: true,
+      message:
+        "該当するメールアドレスが登録されている場合、パスワード再設定用の案内を送信しました。受信トレイをご確認ください。",
+    };
+    if (!email) {
+      json(res, 200, genericOk);
+      return;
+    }
+    if (!hasSmtpEnv(process.env)) {
+      json(res, 503, {
+        ok: false,
+        message: "パスワード再設定メールを送信できません。SMTP が未設定です。管理者にお問い合わせください。",
+      });
+      return;
+    }
+    const users = await loadUsers();
+    const user = users.find((u) => String(u.email || "").toLowerCase() === email);
+    if (!user) {
+      json(res, 200, genericOk);
+      return;
+    }
+    const base = resolvePasswordResetBaseUrlProxy(req, body);
+    if (!base) {
+      json(res, 500, {
+        ok: false,
+        message:
+          "再設定ページのURLを決定できませんでした。ブラウザのURLから操作するか、環境変数 APP_LOGIN_URL を設定してください。",
+      });
+      return;
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresMs = Date.now() + 60 * 60 * 1000;
+    await userStore.setPasswordResetTokenByEmail(email, token, expiresMs);
+    const resetUrl = `${base}?token=${encodeURIComponent(token)}`;
+    try {
+      await sendPasswordResetMail(process.env, {
+        email: user.email,
+        name: user.name || "",
+        resetUrl,
+      });
+    } catch (e) {
+      await userStore.clearPasswordResetByEmail(email);
+      json(res, 500, { ok: false, message: e.message || "メール送信に失敗しました" });
+      return;
+    }
+    json(res, 200, genericOk);
+    return;
+  }
+
+  if (urlPath === "/auth/reset-password" && req.method === "POST") {
+    const body = await readBody(req);
+    const token = String(body.token || "").trim();
+    const newPassword = String(body.newPassword || "");
+    const newPasswordConfirm = String(body.newPasswordConfirm || "");
+    if (!token) {
+      json(res, 400, { ok: false, message: "再設定用のトークンがありません。" });
+      return;
+    }
+    if (newPassword.length < 8) {
+      json(res, 400, { ok: false, message: "パスワードは8文字以上にしてください" });
+      return;
+    }
+    if (newPassword !== newPasswordConfirm) {
+      json(res, 400, { ok: false, message: "パスワード（確認）が一致しません" });
+      return;
+    }
+    const result = await userStore.consumePasswordReset(token, sha256(newPassword));
+    if (!result.ok) {
+      json(res, 400, { ok: false, message: result.message });
+      return;
+    }
+    json(res, 200, {
+      ok: true,
+      message: "パスワードを更新しました。ログイン画面からログインしてください。",
+    });
     return;
   }
 
@@ -852,8 +977,22 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    const users = (await loadUsers()).filter((u) => u.tenantId === me.tenantId);
-    const visible = isPropertyScopedRole(me.role) ? users.filter((u) => u.id === me.id) : users;
+    const users = (await loadUsers()).filter(
+      (u) => String(u.tenantId) === String(me.tenantId)
+    );
+    let visible;
+    if (isPropertyScopedRole(me.role)) {
+      visible = users.filter((u) => String(u.id) === String(me.id));
+    } else if (isMaster(me.role)) {
+      visible = users;
+    } else if (normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      visible = mc
+        ? users.filter((u) => String(u.client || "").trim() === mc)
+        : users.filter((u) => String(u.id) === String(me.id));
+    } else {
+      visible = users;
+    }
     json(res, 200, { ok: true, accounts: visible.map(publicUser) });
     return;
   }
@@ -925,6 +1064,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (isPropertyScopedRole(role) && propertyIds.length === 0)
       return err("物件管理者は担当物件を1件以上選択してください");
+    if (!isMaster(me.role) && normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      if (!mc || String(client).trim() !== mc) {
+        json(res, 403, { ok: false, message: "自分のクライアントに属するアカウントのみ作成できます" });
+        return;
+      }
+    }
 
     const newUser = normalizeUser({
       id: crypto.randomUUID(),
@@ -1042,6 +1188,17 @@ const server = http.createServer(async (req, res) => {
     const idx = users.findIndex((u) => u.id === id && u.tenantId === me.tenantId);
     if (idx < 0) { json(res, 404, { ok: false }); return; }
     if (isPropertyScopedRole(me.role) && id !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isMaster(me.role) && normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      if (!mc || String(users[idx].client || "").trim() !== mc) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+      if (String(client).trim() !== mc) {
+        json(res, 403, { ok: false, message: "クライアント（企業）の変更はできません" });
+        return;
+      }
+    }
     if (isMaster(users[idx].role) && !isMaster(me.role)) {
       json(res, 403, { ok: false, message: "マスターアカウントの編集はマスターのみが行えます" });
       return;
@@ -1111,6 +1268,13 @@ const server = http.createServer(async (req, res) => {
     const users = await loadUsers();
     const victim = users.find((u) => u.id === id && u.tenantId === me.tenantId);
     if (!victim) { json(res, 404, { ok: false, message: "対象が見つかりません" }); return; }
+    if (!isMaster(me.role) && normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      if (!mc || String(victim.client || "").trim() !== mc) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+    }
     if (isMaster(victim.role)) {
       json(res, 400, { ok: false, message: "マスター権限のユーザーは削除できません" });
       return;
@@ -1129,6 +1293,13 @@ const server = http.createServer(async (req, res) => {
     const users = await loadUsers();
     const target = users.find((u) => u.id === id && String(u.tenantId) === String(me.tenantId));
     if (!target) { json(res, 404, { ok: false, message: "対象アカウントが見つかりません" }); return; }
+    if (!isMaster(me.role) && normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      if (!mc || String(target.client || "").trim() !== mc) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+    }
     if (!target.email) { json(res, 400, { ok: false, message: "メールアドレスが未設定です" }); return; }
     if (!hasSmtpEnv(process.env)) { json(res, 400, { ok: false, message: "SMTP設定が未登録です" }); return; }
     const body = await readBody(req);
@@ -1636,6 +1807,20 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ══ GET /local/customers/field-spec-keys ═══════
+  if (urlPath === "/local/customers/field-spec-keys" && req.method === "GET") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    const me = await currentUserFromSession(session);
+    if (!me) { json(res, 401, { ok: false }); return; }
+    json(res, 200, {
+      ok: true,
+      keys: CUSTOMER_SNAPSHOT_FIELDS,
+      fields: getCustomerSpecFieldDefs(),
+    });
+    return;
+  }
+
   // ══ GET/PUT /local/customers/columns ═══════════
   if (urlPath === "/local/customers/columns" && req.method === "GET") {
     const session = getSession(getToken(req));
@@ -1646,8 +1831,17 @@ const server = http.createServer(async (req, res) => {
     if (!isAdminLike(me.role) && targetUserId !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const columns = await getCustomerListColumns(me.tenantId, targetUserId);
     const prop = await getActivePropertyForUser(session.userId);
-    const availableFields = prop ? await listCustomerAvailableFields(prop.id, 500) : [];
-    json(res, 200, { ok: true, columns, defaults: DEFAULT_CUSTOMER_COLUMNS, availableFields });
+    const availableFields = prop
+      ? await listCustomerAvailableFields(prop.id, 500, { prop, secrets: ENV })
+      : [];
+    json(res, 200, {
+      ok: true,
+      columns,
+      defaults: DEFAULT_CUSTOMER_COLUMNS,
+      availableFields,
+      specFieldKeys: CUSTOMER_SNAPSHOT_FIELDS,
+      specFields: getCustomerSpecFieldDefs(),
+    });
     return;
   }
   if (urlPath === "/local/customers/columns" && req.method === "PUT") {

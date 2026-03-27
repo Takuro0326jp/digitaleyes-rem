@@ -26,11 +26,13 @@ const {
   saveCustomerListColumns,
   DEFAULT_CUSTOMER_COLUMNS,
   listCustomerAvailableFields,
+  getCustomerSpecFieldDefs,
   getCustomerDetailFieldConfig,
   saveCustomerDetailFieldConfig,
   DEFAULT_CUSTOMER_DETAIL_FIELDS,
   DEFAULT_VISIT_STATUSES,
 } = require("../lib/sync-service");
+const { CUSTOMER_SNAPSHOT_FIELDS } = require("../lib/customer-fields");
 const {
   listPropertiesByUser,
   getPropertyByIdForUser,
@@ -82,7 +84,13 @@ const {
 } = require("../lib/s3-media");
 const { s3ConfigFromProperty } = require("../lib/media-s3");
 const { S3Client, HeadBucketCommand } = require("@aws-sdk/client-s3");
-const { sendAccountInviteMail, sendSmtpTestMail, sendLoginOtpMail, hasSmtpEnv } = require("../lib/mailer");
+const {
+  sendAccountInviteMail,
+  sendSmtpTestMail,
+  sendLoginOtpMail,
+  sendPasswordResetMail,
+  hasSmtpEnv,
+} = require("../lib/mailer");
 const { buildWeeklyReportBuffer } = require("../lib/weekly-report");
 const { buildCustomerAnalysisReport } = require("../lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("../lib/customer-karte-export");
@@ -201,6 +209,19 @@ function resolveInviteLoginUrl(req, body, env) {
     } catch (_) {}
   }
   return "";
+}
+
+/** パスワード再設定ページのベース URL（login と同規則・パスのみ reset-password.html） */
+function resolvePasswordResetBaseUrl(req, body, env) {
+  const loginUrl = resolveInviteLoginUrl(req, { ...body, loginUrl: body.resetBaseUrl || body.loginUrl }, env);
+  if (!loginUrl) return "";
+  try {
+    const x = new URL(loginUrl);
+    const path = String(x.pathname || "").replace(/\/login\.html?$/i, "/reset-password.html");
+    return `${x.origin}${path}`;
+  } catch (_) {
+    return String(loginUrl).replace(/\/login\.html?$/i, "/reset-password.html");
+  }
 }
 
 /** マスターは全クライアント。クライアント管理者は user.client と企業名が一致する行のみ。 */
@@ -505,6 +526,91 @@ module.exports = async (req, res) => {
     return;
   }
 
+  // ── POST /auth/forgot-password ──
+  if (routePath === "/auth/forgot-password" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const email = String(body.email || "").toLowerCase().trim();
+    const genericOk = {
+      ok: true,
+      message:
+        "該当するメールアドレスが登録されている場合、パスワード再設定用の案内を送信しました。受信トレイをご確認ください。",
+    };
+    if (!email) {
+      json(res, 200, genericOk);
+      return;
+    }
+    const env2 = ENV();
+    if (!hasSmtpEnv(env2)) {
+      json(res, 503, {
+        ok: false,
+        message: "パスワード再設定メールを送信できません。SMTP が未設定です。管理者にお問い合わせください。",
+      });
+      return;
+    }
+    const users = await userStore.listUsers();
+    const user = users.find((u) => String(u.email || "").toLowerCase() === email);
+    if (!user) {
+      json(res, 200, genericOk);
+      return;
+    }
+    const base = resolvePasswordResetBaseUrl(req, body, env2);
+    if (!base) {
+      json(res, 500, {
+        ok: false,
+        message:
+          "再設定ページのURLを決定できませんでした。ブラウザのURLから操作するか、環境変数 APP_LOGIN_URL を設定してください。",
+      });
+      return;
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresMs = Date.now() + 60 * 60 * 1000;
+    await userStore.setPasswordResetTokenByEmail(email, token, expiresMs);
+    const resetUrl = `${base}?token=${encodeURIComponent(token)}`;
+    try {
+      await sendPasswordResetMail(env2, {
+        email: user.email,
+        name: user.name || "",
+        resetUrl,
+      });
+    } catch (e) {
+      await userStore.clearPasswordResetByEmail(email);
+      json(res, 500, { ok: false, message: e.message || "メール送信に失敗しました" });
+      return;
+    }
+    json(res, 200, genericOk);
+    return;
+  }
+
+  // ── POST /auth/reset-password ──
+  if (routePath === "/auth/reset-password" && req.method === "POST") {
+    const body = await readJsonBody(req);
+    const token = String(body.token || "").trim();
+    const newPassword = String(body.newPassword || "");
+    const newPasswordConfirm = String(body.newPasswordConfirm || "");
+    if (!token) {
+      json(res, 400, { ok: false, message: "再設定用のトークンがありません。" });
+      return;
+    }
+    if (newPassword.length < 8) {
+      json(res, 400, { ok: false, message: "パスワードは8文字以上にしてください" });
+      return;
+    }
+    if (newPassword !== newPasswordConfirm) {
+      json(res, 400, { ok: false, message: "パスワード（確認）が一致しません" });
+      return;
+    }
+    const result = await userStore.consumePasswordReset(token, sha256(newPassword));
+    if (!result.ok) {
+      json(res, 400, { ok: false, message: result.message });
+      return;
+    }
+    json(res, 200, {
+      ok: true,
+      message: "パスワードを更新しました。ログイン画面からログインしてください。",
+    });
+    return;
+  }
+
   // ── POST /auth/logout ──
   if (routePath === "/auth/logout" && req.method === "POST") {
     json(res, 200, { ok: true });
@@ -585,13 +691,25 @@ module.exports = async (req, res) => {
   // ── GET /user/accounts（schedule用: 担当者一覧） ──
   if (routePath === "/user/accounts" && req.method === "GET") {
     const users = await userStore.listUsers();
-    const me = users.find((u) => u.id === session.userId);
+    const me = users.find((u) => String(u.id) === String(session.userId));
     if (!me) { json(res, 401, { ok: false }); return; }
     const myTenant = String(me.tenantId || "1");
     const base = users
       .filter((u) => String(u.tenantId || "1") === myTenant)
       .map((u) => publicUser(normalizeUser(u)));
-    const accounts = isPropertyScopedRole(me.role) ? base.filter((u) => u.id === me.id) : base;
+    let accounts;
+    if (isPropertyScopedRole(me.role)) {
+      accounts = base.filter((u) => String(u.id) === String(me.id));
+    } else if (isMaster(me.role)) {
+      accounts = base;
+    } else if (normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      accounts = mc
+        ? base.filter((u) => String(u.client || "").trim() === mc)
+        : base.filter((u) => String(u.id) === String(me.id));
+    } else {
+      accounts = base;
+    }
     json(res, 200, { ok: true, accounts });
     return;
   }
@@ -661,6 +779,12 @@ module.exports = async (req, res) => {
     }
     if (isPropertyScopedRole(role) && propertyIds.length === 0)
       return err(400, "物件管理者は担当物件を1件以上選択してください");
+    if (!isMaster(me.role) && normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      if (!mc || String(client).trim() !== mc) {
+        return err(403, "自分のクライアントに属するアカウントのみ作成できます");
+      }
+    }
 
     const newUser = normalizeUser({
       id: crypto.randomUUID(),
@@ -693,6 +817,17 @@ module.exports = async (req, res) => {
     const idx = users.findIndex((u) => u.id === id && String(u.tenantId || "1") === String(me.tenantId || "1"));
     if (idx < 0) { json(res, 404, { ok: false, message: "対象が見つかりません" }); return; }
     if (isPropertyScopedRole(me.role) && id !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isMaster(me.role) && normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      if (!mc || String(users[idx].client || "").trim() !== mc) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+      if (String(client).trim() !== mc) {
+        json(res, 403, { ok: false, message: "クライアント（企業）の変更はできません" });
+        return;
+      }
+    }
     const prevRole = normalizeRole(users[idx].role || 2);
     if (isMaster(users[idx].role) && !isMaster(me.role)) {
       json(res, 403, { ok: false, message: "マスターアカウントの編集はマスターのみが行えます" });
@@ -770,6 +905,13 @@ module.exports = async (req, res) => {
       (u) => u.id === id && String(u.tenantId || "1") === String(me.tenantId || "1")
     );
     if (!victim) { json(res, 404, { ok: false, message: "対象が見つかりません" }); return; }
+    if (!isMaster(me.role) && normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      if (!mc || String(victim.client || "").trim() !== mc) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+    }
     if (isMaster(victim.role)) {
       json(res, 400, { ok: false, message: "マスター権限のユーザーは削除できません" });
       return;
@@ -792,6 +934,13 @@ module.exports = async (req, res) => {
     const id = decodeURIComponent(routePath.slice("/user/accounts/".length, -"/invite".length));
     const target = users.find((u) => u.id === id && String(u.tenantId || "1") === String(me.tenantId || "1"));
     if (!target) { json(res, 404, { ok: false, message: "対象アカウントが見つかりません" }); return; }
+    if (!isMaster(me.role) && normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const mc = String(me.client || "").trim();
+      if (!mc || String(target.client || "").trim() !== mc) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+    }
     if (!target.email) { json(res, 400, { ok: false, message: "メールアドレスが未設定です" }); return; }
     const env = ENV();
     if (!hasSmtpEnv(env)) { json(res, 400, { ok: false, message: "SMTP設定が未登録です" }); return; }
@@ -1804,6 +1953,19 @@ module.exports = async (req, res) => {
     return;
   }
 
+  // ── GET /local/customers/field-spec-keys（仕様 c.* 一覧・Vercel 等で静的 JSON が無い場合の取得用） ──
+  if (routePath === "/local/customers/field-spec-keys" && req.method === "GET") {
+    const users = await userStore.listUsers();
+    const me = users.find((u) => u.id === session.userId);
+    if (!me) { json(res, 401, { ok: false }); return; }
+    json(res, 200, {
+      ok: true,
+      keys: CUSTOMER_SNAPSHOT_FIELDS,
+      fields: getCustomerSpecFieldDefs(),
+    });
+    return;
+  }
+
   // ── GET/PUT /local/customers/columns ──
   if (routePath === "/local/customers/columns" && req.method === "GET") {
     const users = await userStore.listUsers();
@@ -1813,8 +1975,18 @@ module.exports = async (req, res) => {
     if (!isAdminLike(me.role) && targetUserId !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const columns = await getCustomerListColumns(String(me.tenantId || "1"), targetUserId);
     const prop = await getActivePropertyForUser(session.userId);
-    const availableFields = prop ? await listCustomerAvailableFields(prop.id, 500) : [];
-    json(res, 200, { ok: true, columns, defaults: DEFAULT_CUSTOMER_COLUMNS, availableFields });
+    const env = ENV();
+    const availableFields = prop
+      ? await listCustomerAvailableFields(prop.id, 500, { prop, secrets: env })
+      : [];
+    json(res, 200, {
+      ok: true,
+      columns,
+      defaults: DEFAULT_CUSTOMER_COLUMNS,
+      availableFields,
+      specFieldKeys: CUSTOMER_SNAPSHOT_FIELDS,
+      specFields: getCustomerSpecFieldDefs(),
+    });
     return;
   }
   if (routePath === "/local/customers/columns" && req.method === "PUT") {

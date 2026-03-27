@@ -594,6 +594,71 @@ function listCellHtml(c, key) {
   return esc(c[key] || "");
 }
 
+function normalizeSpecFieldRows(arr) {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((x) => ({
+      key: String(x.key || "").trim(),
+      defaultLabel: String(x.defaultLabel || "").trim(),
+    }))
+    .filter((x) => x.key.startsWith("c.") && x.defaultLabel);
+}
+
+/** 仕様の論理名（defaultLabel）を API / 静的 JSON から取得 */
+async function loadFieldSpecFromApiOrStatic() {
+  let fields = [];
+  try {
+    const fsRes = await fetch(`${CONFIG.API_BASE}/local/customers/field-spec-keys`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+      cache: "no-store",
+    });
+    if (fsRes.ok) {
+      const j = await fsRes.json();
+      if (j.ok && Array.isArray(j.fields) && j.fields.length) fields = normalizeSpecFieldRows(j.fields);
+    }
+  } catch (_) {}
+  if (!fields.length) {
+    try {
+      const specRes = await fetch(new URL("customer-field-spec.json", window.location.href), { cache: "no-store" });
+      if (specRes.ok) {
+        const specJson = await specRes.json();
+        if (Array.isArray(specJson.fields) && specJson.fields.length) fields = normalizeSpecFieldRows(specJson.fields);
+      }
+    } catch (_) {}
+  }
+  return fields;
+}
+
+function isWeakDefaultLabel(key, defaultLabel) {
+  const k = String(key || "");
+  const dl = String(defaultLabel || "");
+  const phys = k.replace(/^c\./, "");
+  if (!dl || dl === k || dl === phys) return true;
+  if (/^アンケート項目\d+$/.test(dl)) return true;
+  return false;
+}
+
+/** 一覧・詳細で共通の論理名（サーバ defaultLabelOfField と一致） */
+function applyFieldSpecToMergedMap(merged, specFields) {
+  const rows = normalizeSpecFieldRows(specFields);
+  if (!rows.length) return;
+  rows.forEach((x) => {
+    const k = x.key;
+    const dl = x.defaultLabel || k.replace(/^c\./, "");
+    if (!merged.has(k)) {
+      merged.set(k, { key: k, defaultLabel: dl });
+      return;
+    }
+    const cur = merged.get(k);
+    if (isWeakDefaultLabel(k, cur.defaultLabel)) merged.set(k, { ...cur, defaultLabel: dl });
+  });
+}
+
+async function mergeFieldSpecIntoMap(merged) {
+  const fields = await loadFieldSpecFromApiOrStatic();
+  applyFieldSpecToMergedMap(merged, fields);
+}
+
 async function loadColumnsConfig(targetUserId = "") {
   const uid = targetUserId || Auth.getUser()?.id || "";
   const qs = new URLSearchParams({ userId: uid });
@@ -602,16 +667,26 @@ async function loadColumnsConfig(targetUserId = "") {
   });
   const d = await res.json();
   if (!res.ok || !d.ok) throw new Error(d.message || "列設定取得に失敗しました");
+  const merged = new Map(
+    BASE_FIELD_DEFS.map((x) => [String(x.key), { key: String(x.key), defaultLabel: String(x.defaultLabel || x.key) }])
+  );
+  CUSTOMER_FIELDS.forEach((f) => {
+    const k = String(f.key || "");
+    if (!k) return;
+    merged.set(k, { key: k, defaultLabel: String(f.label || k) });
+  });
   if (Array.isArray(d.availableFields) && d.availableFields.length) {
-    const merged = new Map(BASE_FIELD_DEFS.map((x) => [String(x.key), { key: String(x.key), defaultLabel: String(x.defaultLabel || x.key) }]));
     d.availableFields
       .map((x) => ({ key: String(x.key || ""), defaultLabel: String(x.defaultLabel || x.key || "") }))
       .filter((x) => x.key)
       .forEach((x) => merged.set(x.key, x));
-    availableFieldDefs = [...merged.values()];
-  } else {
-    availableFieldDefs = [...BASE_FIELD_DEFS];
   }
+  if (Array.isArray(d.specFields) && d.specFields.length) {
+    applyFieldSpecToMergedMap(merged, d.specFields);
+  } else {
+    await mergeFieldSpecIntoMap(merged);
+  }
+  availableFieldDefs = [...merged.values()].sort((a, b) => a.key.localeCompare(b.key, "ja"));
   const normalizeCol = (x) => ({
     key: String(x.key || ""),
     width: Number(x.width || 120),
@@ -708,43 +783,6 @@ function setColLabel(key, v) {
   x.label = String(v || "").trim() || fieldLabelOf(key);
 }
 
-function defaultDetailRowFromListColumn(col) {
-  const key = String(col.key || "");
-  const base = CUSTOMER_FIELDS.find((f) => f.key === key);
-  return {
-    key,
-    label: String(col.label || "").trim() || fieldLabelOf(col),
-    display: 1,
-    print: 1,
-    oneLine: base && base.full ? 0 : 1,
-    width: Math.max(80, Math.min(600, Number(col.width || 160))),
-  };
-}
-
-function mergeListColumnsIntoDetailFields(existingFields, columns) {
-  const out = (existingFields || [])
-    .map((x) => ({ ...x, key: String(x.key || "") }))
-    .filter((x) => x.key);
-  const seen = new Set(out.map((x) => x.key));
-  for (const col of columns || []) {
-    const k = String(col.key || "");
-    if (!k || seen.has(k)) continue;
-    out.push(defaultDetailRowFromListColumn(col));
-    seen.add(k);
-  }
-  return out;
-}
-
-async function fetchDetailFieldConfigForUser(userId) {
-  const qs = new URLSearchParams({ userId: String(userId || "") });
-  const res = await fetch(`${CONFIG.API_BASE}/local/customers/detail-fields?${qs}`, {
-    headers: { Authorization: `Bearer ${Auth.getToken()}` },
-  });
-  const d = await res.json();
-  if (!res.ok || !d.ok) throw new Error(d.message || "詳細項目設定の取得に失敗しました");
-  return d.fields || [];
-}
-
 async function saveColConfig() {
   if (!isAdminRole()) return;
   if (!colDraft.length) { alert("列を1つ以上選択してください"); return; }
@@ -756,23 +794,6 @@ async function saveColConfig() {
   const d = await res.json();
   if (!res.ok || !d.ok) { alert(d.message || "保存に失敗しました"); return; }
   activeColumns = d.columns || colDraft;
-  try {
-    const existingDetail = await fetchDetailFieldConfigForUser(colTargetUserId);
-    const mergedDetail = mergeListColumnsIntoDetailFields(existingDetail, colDraft);
-    const res2 = await fetch(`${CONFIG.API_BASE}/local/customers/detail-fields`, {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: colTargetUserId, fields: mergedDetail }),
-    });
-    const d2 = await res2.json();
-    if (!res2.ok || !d2.ok) {
-      alert(d2.message || "一覧は保存できましたが、詳細項目への反映に失敗しました。詳細の表示項目設定を確認してください。");
-    } else if (String(Auth.getUser()?.id) === String(colTargetUserId)) {
-      detailFieldConfig = d2.fields || mergedDetail;
-    }
-  } catch (e) {
-    alert(`一覧は保存できましたが、詳細項目への反映でエラーが発生しました: ${e.message || e}`);
-  }
   closeColConfig();
   renderTable();
 }
@@ -799,7 +820,7 @@ function formatCustomerExportValue(v, key) {
 }
 function allCustomerExportFields(c) {
   const row = c || {};
-  const keys = Object.keys(row).filter((k) => String(k).startsWith("c."));
+  const keys = Object.keys(row).filter((k) => String(k).startsWith("c.") && k !== "c.qr");
   const fieldOrder = new Map(CUSTOMER_FIELDS.map((f, i) => [f.key, i]));
   keys.sort((a, b) => {
     const ia = fieldOrder.has(a) ? fieldOrder.get(a) : 1e9;
@@ -916,7 +937,7 @@ function renderEditFields(c) {
   getAllCustomerFieldDefs([c]).forEach((f) => {
     if (!fieldMap.has(f.key)) fieldMap.set(f.key, { key: f.key, label: fieldLabelOf(f.key) });
   });
-  const allFields = [...fieldMap.values()].filter((f) => String(f.key) !== "c.dm_ng");
+  const allFields = [...fieldMap.values()].filter((f) => String(f.key) !== "c.dm_ng" && String(f.key) !== "c.qr");
   const cfgMap = new Map((detailFieldConfig || []).map((x) => [String(x.key), x]));
   const mergedCfg = allFields.map((f) => {
     const cfg = cfgMap.get(String(f.key));
@@ -1078,7 +1099,7 @@ async function loadDetailFieldConfig() {
   });
   const d = await res.json();
   if (!res.ok || !d.ok) throw new Error(d.message || "詳細項目設定の取得に失敗しました");
-  detailFieldConfig = d.fields || [];
+  detailFieldConfig = (d.fields || []).filter((row) => String(row.key || "") !== "c.qr");
 }
 
 function openDetailConfig() {
@@ -1086,10 +1107,53 @@ function openDetailConfig() {
   configMode = "detail";
   switchColConfigLayout("detail");
   document.querySelector("#colConfigModal .modal-header h3").textContent = "顧客詳細の項目並び替え";
-  detailDraft = (detailFieldConfig.length ? detailFieldConfig : []).map((x)=>({ ...x }));
-  if (!detailDraft.length) {
-    detailDraft = getAllCustomerFieldDefs(customers).filter((f)=>f.key!=="c.id").map((f)=>({ key:f.key, label:fieldLabelOf(f.key), display:1, print:1, oneLine:0, width:160 }));
-  }
+  const allDefs = getAllCustomerFieldDefs(customers).filter((f) => f.key !== "c.id" && f.key !== "c.qr");
+  const fieldMap = new Map(
+    CUSTOMER_FIELDS.map((f) => [f.key, { key: f.key, label: f.label, defaultLabel: f.label, full: f.full }])
+  );
+  allDefs.forEach((f) => {
+    if (fieldMap.has(f.key)) return;
+    const logical = String(f.defaultLabel || "").trim() || fieldLabelOf(f.key);
+    fieldMap.set(f.key, { key: f.key, label: logical, defaultLabel: logical });
+  });
+  const allFields = [...fieldMap.values()].filter((f) => String(f.key) !== "c.id" && String(f.key) !== "c.qr");
+  const allKeys = new Set(allFields.map((f) => String(f.key)));
+  const cfgMap = new Map((detailFieldConfig || []).map((x) => [String(x.key), x]));
+  const defaultRow = (f) => ({
+    key: f.key,
+    label: String(f.label || f.defaultLabel || "").trim() || fieldLabelOf(f.key),
+    display: 1,
+    print: 1,
+    oneLine: f.full ? 0 : 1,
+    width: 160,
+  });
+  const mergedByKey = new Map();
+  allFields.forEach((f) => {
+    const cfg = cfgMap.get(String(f.key));
+    if (cfg) {
+      mergedByKey.set(String(f.key), {
+        ...cfg,
+        key: f.key,
+        label: cfg.label || f.label || String(f.defaultLabel || "").trim() || fieldLabelOf(f.key),
+        width: Number(cfg.width != null ? cfg.width : 160),
+      });
+    } else {
+      mergedByKey.set(String(f.key), defaultRow(f));
+    }
+  });
+  detailDraft = [];
+  const seen = new Set();
+  (detailFieldConfig || []).forEach((row) => {
+    const k = String(row.key || "");
+    if (!k || !allKeys.has(k) || !mergedByKey.has(k)) return;
+    detailDraft.push(mergedByKey.get(k));
+    seen.add(k);
+  });
+  allFields.forEach((f) => {
+    const k = String(f.key);
+    if (seen.has(k)) return;
+    detailDraft.push(mergedByKey.get(k));
+  });
   renderDetailConfigUi();
   document.getElementById("colConfigModal").style.display = "flex";
 }
@@ -1123,14 +1187,15 @@ function setDetailLabel(i,v){ if(detailDraft[i]) detailDraft[i].label=String(v||
 function setDetailBool(i,k,b){ if(detailDraft[i]) detailDraft[i][k]=b?1:0; }
 async function saveDetailConfig() {
   if (!isAdminRole()) return;
+  const fieldsPayload = detailDraft.filter((row) => String(row.key || "") !== "c.qr");
   const res = await fetch(`${CONFIG.API_BASE}/local/customers/detail-fields`, {
     method:"PUT",
     headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
-    body: JSON.stringify({ userId: String(colTargetUserId || Auth.getUser()?.id || ""), fields: detailDraft }),
+    body: JSON.stringify({ userId: String(colTargetUserId || Auth.getUser()?.id || ""), fields: fieldsPayload }),
   });
   const d = await res.json();
   if (!res.ok || !d.ok) { alert(d.message || "保存に失敗しました"); return; }
-  detailFieldConfig = d.fields || detailDraft;
+  detailFieldConfig = (d.fields || fieldsPayload).filter((row) => String(row.key || "") !== "c.qr");
   closeColConfig();
 }
 
@@ -1397,7 +1462,7 @@ async function saveModalCustomer() {
     if (!fieldMap.has(f.key)) fieldMap.set(f.key, { key: f.key });
   });
   [...fieldMap.values()].forEach((f) => {
-    if (f.ro || f.key === "c.id" || f.key === "c.dm_ng") return;
+    if (f.ro || f.key === "c.id" || f.key === "c.dm_ng" || f.key === "c.qr") return;
     const el = document.getElementById(fieldId(f.key));
     if (!el) return;
     const v = String(el.value || "").trim();
@@ -1921,7 +1986,7 @@ async function printLabelsFromTemplate() {
     const out = XLSX.utils.book_new();
     const printFields = (detailFieldConfig.length ? detailFieldConfig : CUSTOMER_FIELDS.map((f) => ({
       key: f.key, label: f.label, print: 1,
-    }))).filter((f) => Number(f.print) !== 0 && f.key !== "c.id");
+    }))).filter((f) => Number(f.print) !== 0 && f.key !== "c.id" && f.key !== "c.qr");
     const labelsByKey = Object.fromEntries(printFields.map((f) => [String(f.key || ""), String(f.label || f.key || "")]));
 
     const printAreaBySheet = [];
@@ -2067,7 +2132,18 @@ function closeModal() {
     await loadColumnsConfig(Auth.getUser()?.id || "");
   } catch (e) {
     console.error(e);
-    availableFieldDefs = [...BASE_FIELD_DEFS];
+    const mergedFallback = new Map(
+      BASE_FIELD_DEFS.map((x) => [String(x.key), { key: String(x.key), defaultLabel: String(x.defaultLabel || x.key) }])
+    );
+    CUSTOMER_FIELDS.forEach((f) => {
+      const k = String(f.key || "");
+      if (!k) return;
+      mergedFallback.set(k, { key: k, defaultLabel: String(f.label || k) });
+    });
+    try {
+      await mergeFieldSpecIntoMap(mergedFallback);
+    } catch (_) {}
+    availableFieldDefs = [...mergedFallback.values()].sort((a, b) => a.key.localeCompare(b.key, "ja"));
     activeColumns = LIST_COLS.map((x) => ({
       key: String(x.key || ""),
       width: 120,

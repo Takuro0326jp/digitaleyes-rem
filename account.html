@@ -290,13 +290,24 @@ function escapeHtmlAttr(s) {
 function renderClientSelect(selected = "") {
   const el = document.getElementById("fClient");
   if (!el) return;
+  const me = Auth.getUser();
   const sel = String(selected || "").trim();
-  const names = new Set((clientsMaster || []).map((c) => String(c.name || "").trim()).filter(Boolean));
+  let list = clientsMaster || [];
+  if (remIsAdminLike(me?.role) && !remIsMaster(me?.role)) {
+    const mc = String(me?.client || "").trim();
+    if (mc) {
+      list = list.filter((c) => String(c.name || "").trim() === mc);
+      if (!list.length) list = [{ name: mc }];
+    } else {
+      list = [];
+    }
+  }
+  const names = new Set((list || []).map((c) => String(c.name || "").trim()).filter(Boolean));
   let extra = "";
   if (sel && !names.has(sel)) {
     extra = `<option value="${escapeHtmlAttr(sel)}">${escapeHtmlAttr(sel)}</option>`;
   }
-  const options = (clientsMaster || [])
+  const options = (list || [])
     .map((c) => {
       const n = String(c.name || "").trim();
       if (!n) return "";
@@ -394,7 +405,12 @@ function openCreate() {
   document.getElementById("fName").value = "";
   document.getElementById("fEmail").value = "";
   fillRoleSelect("");
-  renderClientSelect("");
+  const me = Auth.getUser();
+  renderClientSelect(
+    remIsAdminLike(me?.role) && !remIsMaster(me?.role)
+      ? String(me?.client || "").trim()
+      : ""
+  );
   document.getElementById("fPassword").value = "";
   document.getElementById("fPassword2").value = "";
   const note = document.getElementById("passwordInviteNote");
