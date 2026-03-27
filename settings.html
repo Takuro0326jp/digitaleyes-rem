@@ -41,7 +41,7 @@
         <strong id="visitStatusTargetProp">-</strong>
       </div>
       <p class="hint" style="margin-bottom:12px;line-height:1.55;max-width:700px">
-        顧客一覧の「ステータス」候補とモーダルでの編集用です。<strong>ヘッダーの物件切替</strong>で対象物件を切り替えて編集します。設定は物件ごとにキャッシュDB（LibSQL）へ保存されます。
+        顧客同期でデジタライズ API から取れたステータス（<code>c.status</code> 等）はキャッシュに反映されます。一覧に現れるのにここにまだ無い文言は、<strong>同期のたびに自動で一覧末尾へ追記</strong>されます（最大60件・重複は除く）。手動で並びや文言を整えたい場合は、この欄を編集して<strong>保存</strong>してください。<strong>ヘッダーの物件切替</strong>で対象物件を切り替えます。設定は物件ごとにキャッシュDB（LibSQL）へ保存されます。
       </p>
       <div class="form-group">
         <label>ステータス名（1行に1つ・最大60件）</label>

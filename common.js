@@ -67,6 +67,42 @@ function remIsAdminLikeRole(role) {
   return n === 1 || n === 2;
 }
 
+/** ヘッダー用: 権限ラベル（ツールチップ・aria 用） */
+function remRoleTitle(role) {
+  const n = Number(role);
+  if (n === 1) return "マスター";
+  if (n === 2) return "クライアント管理者";
+  if (n === 3) return "物件管理者";
+  if (n === 4) return "ユーザー";
+  return "ユーザー";
+}
+
+/**
+ * ログイン者名の左に表示する権限アイコン（SVG・ブランド色 currentColor）
+ */
+function remRoleIconHtml(role) {
+  const title = remRoleTitle(role);
+  const n = Number(role);
+  const svgOpen =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">';
+  let inner = "";
+  if (n === 1) {
+    inner =
+      '<polygon fill="currentColor" stroke="none" points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
+  } else if (n === 2) {
+    inner =
+      '<rect width="20" height="14" x="2" y="7" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>';
+  } else if (n === 3) {
+    inner =
+      '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>';
+  } else {
+    inner =
+      '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>';
+  }
+  const titleEsc = String(title).replace(/"/g, "&quot;");
+  return `<span class="header-role-badge" role="img" aria-label="${titleEsc}" title="${titleEsc}">${svgOpen}${inner}</svg></span>`;
+}
+
 /** サーバー応答でローカル user を上書きするが、キー欠落時に消えないようマージ（loginDefaultPropertyId 等） */
 function mergeStoredUser(serverUser) {
   const prev = Auth.getUser();
@@ -188,6 +224,10 @@ function renderHeader(currentPage) {
     const s = String(raw).trim();
     return s && s !== "undefined" ? s : `物件(${p?.id || "-"})`;
   };
+  const escAttr = (s) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const displayName = escAttr(user?.name || "");
+
   const propertyOptions = props.length
     ? props.map(p => {
       const lbl = String(labelOfProp(p)).replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
@@ -225,8 +265,11 @@ function renderHeader(currentPage) {
     </aside>
 
     <div class="header-welcome">
-      <span class="user-name">${user?.name || ""}</span>
-      <span>さま</span>
+      <span class="header-welcome-line">
+        ${remRoleIconHtml(user?.role)}
+        <span class="user-name">${displayName}</span>
+        <span>さま</span>
+      </span>
     </div>
     <div class="d-flex align-items-center gap-3">
       <div class="header-select">
@@ -317,15 +360,25 @@ function parseTotalCount(data) {
   return typeof c === "string" ? parseInt(c.split("/").pop()) : c;
 }
 
+/** 一覧列キー: 全角ドット等を正規化（保存済み `c．status` 等でセル描画が一致しないのを防ぐ） */
+function normalizeCustomerListColKey(key) {
+  return String(key || "")
+    .trim()
+    .replace(/\uFF0E/g, ".")
+    .replace(/\u3002/g, ".")
+    .normalize("NFKC");
+}
+
 function baitaiBadge(v) {
   if (!v) return "";
   const map = { "公式HP": "badge-hp", "SUUMO": "badge-suumo", "HOMES": "badge-homes", "Yahoo!不動産": "badge-yahoo" };
   return `<span class="badge-tag ${map[v] || 'badge-hp'}">${v}</span>`;
 }
 function statusBadge(v) {
-  if (!v) return "";
+  const s = v == null ? "" : String(v).trim();
+  if (!s) return "";
   const map = { "資料請求・エントリー": "badge-entry", "新規来場": "badge-visit", "再来場": "badge-visit", "契約": "badge-contract", "引渡": "badge-contract", "検討中止": "badge-cancel" };
-  return `<span class="badge-status ${map[v] || 'badge-entry'}">${v}</span>`;
+  return `<span class="badge-status ${map[s] || 'badge-entry'}">${s}</span>`;
 }
 function exportCSV(rows, headers, keys, filename, formatCell) {
   const fmt =

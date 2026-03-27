@@ -16,7 +16,22 @@ a:hover { text-decoration: underline; }
 /* Header */
 .header { padding: 14px 22px; border-bottom: 1px solid rgb(224,224,224); background-color: #fff; margin-left: 240px; }
 .header-welcome { font-size: 12px; color: rgb(120,130,140); text-align: right; margin-bottom: 6px; }
-.user-name { margin-right: 10px; font-weight: 700; color: rgb(70,83,98); }
+.header-welcome-line {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.header-role-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(53,124,176);
+  flex-shrink: 0;
+}
+.header-role-badge svg { display: block; vertical-align: middle; }
+.user-name { margin-right: 4px; font-weight: 700; color: rgb(70,83,98); }
 .header-select select {
   width: 320px; padding: 6px 12px; border: 1px solid #ced4da; border-radius: 0;
   font-size: 14px; color: rgb(70,83,98); background: #fff; font-family: inherit;

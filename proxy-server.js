@@ -1747,6 +1747,9 @@ const server = http.createServer(async (req, res) => {
       const qp = {};
       u.searchParams.forEach((v, k) => { qp[k] = v; });
       const pack = await queryLocalCustomers(prop.id, qp);
+      if (String(qp.diag || "").trim() === "1" && pack.data && pack.data._diag) {
+        console.info("[REM customer-list diag]", JSON.stringify(pack.data._diag));
+      }
       json(res, 200, { ok: true, data: pack.data });
     } catch (e) {
       console.error("[local/customers]", e.stack || e);
