@@ -38,6 +38,7 @@ const {
   updateProperty,
   deleteProperty,
   updatePropertyMeta,
+  syncPropertiesClientName,
   listPropertyUpdateHistory,
   listPropertyImages,
   addPropertyImage,
@@ -174,6 +175,43 @@ function normalizeUser(u) {
 
 function canManageAccounts(me) {
   return me && isAdminLike(me.role);
+}
+
+/** 招待メール用ログインURL（クライアントの body.loginUrl → APP_LOGIN_URL → Origin/Referer/body.origin） */
+function resolveInviteLoginUrl(req, body, env) {
+  let u = String(body.loginUrl || env.APP_LOGIN_URL || "").trim();
+  if (u) return u;
+  const origin = String(req.headers.origin || "").trim();
+  if (origin) {
+    try {
+      return `${new URL(origin).origin}/login.html`;
+    } catch (_) {}
+  }
+  const ref = String(req.headers.referer || "").trim();
+  if (ref) {
+    try {
+      return `${new URL(ref).origin}/login.html`;
+    } catch (_) {}
+  }
+  const og = String(body.origin || "").trim();
+  if (og) {
+    try {
+      const base = /^https?:\/\//i.test(og) ? og : `https://${og}`;
+      return `${new URL(base).origin}/login.html`;
+    } catch (_) {}
+  }
+  return "";
+}
+
+/** マスターは全クライアント。クライアント管理者は user.client と企業名が一致する行のみ。 */
+function assertClientRecordAccess(me, clientRow) {
+  if (!me || !clientRow) return { ok: false, message: "権限がありません" };
+  if (isMaster(me.role)) return { ok: true };
+  if (!isAdminLike(me.role)) return { ok: false, message: "権限がありません" };
+  if (String(me.client || "").trim() !== String(clientRow.name || "").trim()) {
+    return { ok: false, message: "このクライアントを操作する権限がありません" };
+  }
+  return { ok: true };
 }
 
 const JWT_SECRET = () =>
@@ -732,8 +770,8 @@ module.exports = async (req, res) => {
       (u) => u.id === id && String(u.tenantId || "1") === String(me.tenantId || "1")
     );
     if (!victim) { json(res, 404, { ok: false, message: "対象が見つかりません" }); return; }
-    if (isMaster(victim.role) && !isMaster(me.role)) {
-      json(res, 403, { ok: false, message: "マスターアカウントの削除はマスターのみが行えます" });
+    if (isMaster(victim.role)) {
+      json(res, 400, { ok: false, message: "マスター権限のユーザーは削除できません" });
       return;
     }
     try {
@@ -758,7 +796,7 @@ module.exports = async (req, res) => {
     const env = ENV();
     if (!hasSmtpEnv(env)) { json(res, 400, { ok: false, message: "SMTP設定が未登録です" }); return; }
     const body = await readJsonBody(req);
-    const loginUrl = String(body.loginUrl || env.APP_LOGIN_URL || "").trim();
+    const loginUrl = resolveInviteLoginUrl(req, body, env);
     let tempPassword = String(body.tempPassword || "").trim();
     if (!tempPassword) {
       tempPassword = randomTempPassword(12);
@@ -1009,12 +1047,17 @@ module.exports = async (req, res) => {
       return;
     }
     const tk = String(me.tenantId || "1");
-    const newProp = await createProperty(tk, {
+    const createPayload = {
       name,
       databaseId,
       databasePassword: databasePassword || "",
       tableName,
-    });
+    };
+    if (normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const cn = String(me.client || "").trim();
+      if (cn) createPayload.clientName = cn;
+    }
+    const newProp = await createProperty(tk, createPayload);
     const users = await userStore.listUsers();
     const ui = users.findIndex((u) => u.id === session.userId);
     if (ui >= 0 && !users[ui].activePropertyId) {
@@ -1279,7 +1322,7 @@ module.exports = async (req, res) => {
               (p) => Array.isArray(me.propertyIds) && me.propertyIds.map(String).includes(String(p.id))
             )
           : propsAll;
-      if (pid && !visible.some((p) => String(p.id) === pid)) {
+      if (pid && !visible.some((p) => String(p.id) === String(pid))) {
         json(res, 400, { ok: false, message: "指定の物件にアクセスできません" });
         return;
       }
@@ -1485,8 +1528,53 @@ module.exports = async (req, res) => {
     const id = url.searchParams.get("id");
     const c = await getClient(String(me.tenantId || "1"), id);
     if (!c) { json(res, 404, { ok: false, message: "見つかりません" }); return; }
+    const ac = assertClientRecordAccess(me, c);
+    if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
     const s3 = await getClientS3Settings(String(me.tenantId || "1"), c.id);
     json(res, 200, { ok: true, client: c, s3 });
+    return;
+  }
+  if (routePath === "/client/api/linked-properties" && req.method === "GET") {
+    const users = await userStore.listUsers();
+    const me = users.find((u) => u.id === session.userId);
+    if (!me || !isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    const tk = String(me.tenantId || "1");
+    const id = url.searchParams.get("id");
+    const c = await getClient(tk, id);
+    if (!c) { json(res, 404, { ok: false, message: "見つかりません" }); return; }
+    const ac = assertClientRecordAccess(me, c);
+    if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
+    const clientName = String(c.name || "").trim();
+    const all = await listPropertiesByUser(tk);
+    const properties = all.map((p) => {
+      const cur = String(p.clientName || "").trim();
+      return {
+        id: p.id,
+        name: p.name || "",
+        clientName: cur,
+        linked: cur === clientName,
+      };
+    });
+    json(res, 200, { ok: true, client: { id: c.id, name: c.name }, properties });
+    return;
+  }
+  if (routePath === "/client/api/linked-properties" && req.method === "PUT") {
+    const users = await userStore.listUsers();
+    const me = users.find((u) => u.id === session.userId);
+    if (!me || !isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    const tk = String(me.tenantId || "1");
+    try {
+      const body = await readJsonBody(req);
+      const c = await getClient(tk, body.clientId);
+      if (!c) { json(res, 404, { ok: false, message: "クライアントが見つかりません" }); return; }
+      const ac = assertClientRecordAccess(me, c);
+      if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
+      const propertyIds = Array.isArray(body.propertyIds) ? body.propertyIds : [];
+      await syncPropertiesClientName(tk, c.name, propertyIds, me.name || "");
+      json(res, 200, { ok: true });
+    } catch (e) {
+      json(res, 400, { ok: false, message: e.message || String(e) });
+    }
     return;
   }
   if (routePath.startsWith("/client/edit/") && req.method === "POST") {
@@ -1495,6 +1583,10 @@ module.exports = async (req, res) => {
     if (!me || !isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(routePath.slice("/client/edit/".length));
     try {
+      const existing = await getClient(String(me.tenantId || "1"), id);
+      if (!existing) { json(res, 404, { ok: false, message: "見つかりません" }); return; }
+      const ac = assertClientRecordAccess(me, existing);
+      if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
       const body = await readJsonBody(req);
       const c = await updateClient(String(me.tenantId || "1"), id, body || {});
       json(res, 200, { ok: true, client: c });
@@ -1508,7 +1600,16 @@ module.exports = async (req, res) => {
     const me = users.find((u) => u.id === session.userId);
     if (!me || !isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const body = await readJsonBody(req);
-    const r = await deleteClients(String(me.tenantId || "1"), body.ids || []);
+    const tk = String(me.tenantId || "1");
+    const ids = body.ids || [];
+    for (const cid of ids) {
+      const row = await getClient(tk, cid);
+      if (row) {
+        const ac = assertClientRecordAccess(me, row);
+        if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
+      }
+    }
+    const r = await deleteClients(tk, ids);
     json(res, 200, { ok: true, ...r });
     return;
   }
@@ -1518,6 +1619,10 @@ module.exports = async (req, res) => {
     if (!me || !isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(routePath.slice("/client/s3/save/".length));
     try {
+      const row = await getClient(String(me.tenantId || "1"), id);
+      if (!row) { json(res, 404, { ok: false, message: "見つかりません" }); return; }
+      const ac = assertClientRecordAccess(me, row);
+      if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
       const body = await readJsonBody(req);
       const saved = await saveClientS3Settings(String(me.tenantId || "1"), id, body || {});
       json(res, 200, { ok: true, s3: saved });
@@ -1530,6 +1635,12 @@ module.exports = async (req, res) => {
     const users = await userStore.listUsers();
     const me = users.find((u) => u.id === session.userId);
     if (!me || !isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    const testCid = decodeURIComponent(routePath.slice("/client/s3/test/".length));
+    const testRow = await getClient(String(me.tenantId || "1"), testCid);
+    if (testRow) {
+      const ac = assertClientRecordAccess(me, testRow);
+      if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
+    }
     try {
       const body = await readJsonBody(req);
       const region = String(body.region || "");
@@ -1554,8 +1665,18 @@ module.exports = async (req, res) => {
       return;
     }
     try {
+      const users = await userStore.listUsers();
+      const me = users.find((u) => u.id === session.userId);
+      if (!me) {
+        json(res, 401, { ok: false, message: "認証が必要です。" });
+        return;
+      }
       const body = await readJsonBody(req);
       const mode = body.mode === "full" ? "full" : "incremental";
+      if (mode === "full" && !isMaster(me.role)) {
+        json(res, 403, { ok: false, message: "全件同期はマスター権限のみ実行できます。" });
+        return;
+      }
       const result = await runCustomerSync(prop, env, mode);
       json(res, 200, result);
     } catch (e) {

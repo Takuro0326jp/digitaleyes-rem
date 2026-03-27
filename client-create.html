@@ -2,6 +2,13 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <script>
+    if (location.protocol !== "file:") {
+      const b = document.createElement("base");
+      b.href = location.origin + "/";
+      document.head.insertBefore(b, document.head.firstChild);
+    }
+  </script>
   <meta name="viewport" content="width=1300">
   <title>クライアント登録 | Real Estate Manager by DIGITALEYES</title>
   <link rel="stylesheet" href="common.css">

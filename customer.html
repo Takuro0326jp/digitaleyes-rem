@@ -256,6 +256,41 @@
 <script>
 const LIMIT = 20;
 const PREFS = ["北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県"];
+
+/** JIS 都道府県コード（1–47 / 01–47）または県名を表示ラベルへ */
+function prefectureDisplayLabel(raw) {
+  if (raw == null || raw === "") return "";
+  const s = String(raw).trim();
+  if (!s) return "";
+  const idx = PREFS.indexOf(s);
+  if (idx >= 0) return PREFS[idx];
+  const n = parseInt(s, 10);
+  if (String(n) === s && n >= 1 && n <= PREFS.length) return PREFS[n - 1];
+  const m = s.match(/^0+([1-9]\d*)$/);
+  if (m) {
+    const n2 = parseInt(m[1], 10);
+    if (n2 >= 1 && n2 <= PREFS.length) return PREFS[n2 - 1];
+  }
+  return s;
+}
+
+/** 詳細フォームの <select> 用 value（1–47）。マップできない値は空（専用オプションで補完） */
+function prefectureSelectCodeFromRaw(raw) {
+  if (raw == null || raw === "") return "";
+  const s = String(raw).trim();
+  if (!s) return "";
+  const idx = PREFS.indexOf(s);
+  if (idx >= 0) return String(idx + 1);
+  const n = parseInt(s, 10);
+  if (String(n) === s && n >= 1 && n <= PREFS.length) return String(n);
+  const m = s.match(/^0+([1-9]\d*)$/);
+  if (m) {
+    const n2 = parseInt(m[1], 10);
+    if (n2 >= 1 && n2 <= PREFS.length) return String(n2);
+  }
+  return "";
+}
+
 const YOSAN = ["～3000万円","～3500万円","～4000万円","～4500万円","～5000万円","～5500万円","～6000万円","～6500万円","～7000万円","～7500万円","～8000万円"];
 const JIKOSIKIN = ["〜100万円","〜200万円","〜300万円","〜400万円","〜500万円","〜600万円","〜700万円","〜800万円","〜900万円","〜1000万円","〜1200万円","〜1500万円","〜2000万円"];
 
@@ -525,6 +560,9 @@ function isAdminRole() {
   const r = Number(Auth.getUser()?.role || 0);
   return r === 1 || r === 2;
 }
+function isMasterRole() {
+  return Number(Auth.getUser()?.role || 0) === 1;
+}
 let availableFieldDefs = [...BASE_FIELD_DEFS];
 function fieldDefByKey(key) {
   return availableFieldDefs.find((x) => x.key === key) || LIST_COL_MAP[key] || { key, defaultLabel: key };
@@ -550,6 +588,7 @@ function listCellHtml(c, key) {
   if (key === "c.qr") return renderMiniQrHtml(c);
   if (key === "c.status") return statusBadge(c[key]);
   if (key === "c.baitai") return baitaiBadge(c[key]);
+  if (key === "c.state") return esc(prefectureDisplayLabel(c[key]));
   if (key === "c.name") return `${esc(c["c.name"] || "")}<br><span style="font-size:11px;color:rgb(150,160,170)">${esc(c["c.kana"] || "")}</span>`;
   if (key === "c.upd_date") return esc((c[key] || "").slice(0, 10));
   return esc(c[key] || "");
@@ -750,7 +789,8 @@ function labelForCustomerExportKey(key) {
   if (def && String(def.label || "").trim()) return String(def.label).trim();
   return String(fieldDefByKey(k).defaultLabel || k.replace(/^c\./, ""));
 }
-function formatCustomerExportValue(v) {
+function formatCustomerExportValue(v, key) {
+  if (key === "c.state") return prefectureDisplayLabel(v);
   if (v == null || v === "") return "";
   if (typeof v === "object") {
     try { return JSON.stringify(v); } catch (_) { return String(v); }
@@ -770,7 +810,7 @@ function allCustomerExportFields(c) {
   return keys.map((key) => ({
     key,
     label: labelForCustomerExportKey(key),
-    value: formatCustomerExportValue(row[key]),
+    value: formatCustomerExportValue(row[key], key),
   }));
 }
 
@@ -834,13 +874,18 @@ function openReactionSnapshot(i) {
   const payload = item.payload || {};
   const rows = Object.keys(payload).sort((a, b) => a.localeCompare(b, "ja"))
     .filter((k) => String(k).startsWith("c."))
-    .map((k) => `<tr>
+    .map((k) => {
+      const cell = k === "c.state"
+        ? prefectureDisplayLabel(payload[k])
+        : (payload[k] == null ? "" : String(payload[k]));
+      return `<tr>
       <th style="text-align:left;padding:6px 8px;border:1px solid #ddd;background:#f8f8f8;min-width:280px">
         <div style="font-weight:700">${esc(fieldLabelOf(k))}</div>
         <div style="font-size:11px;color:#678">${esc(k)}</div>
       </th>
-      <td style="padding:6px 8px;border:1px solid #ddd">${esc(payload[k] == null ? "" : String(payload[k]))}</td>
-    </tr>`)
+      <td style="padding:6px 8px;border:1px solid #ddd">${esc(cell)}</td>
+    </tr>`;
+    })
     .join("");
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>反響当時データ</title></head><body style="font-family:sans-serif;padding:16px"><h3>反響当時データ</h3><table style="border-collapse:collapse;width:100%">${rows}</table></body></html>`;
   const w = window.open("", "reactionSnapshot", "width=980,height=760");
@@ -889,6 +934,17 @@ function renderEditFields(c) {
     const val = c[f.key] == null ? "" : String(c[f.key]);
     if (f.type === "status") {
       return `<div class="${Number(it.oneLine)===1 ? "" : "full"}"><label>${label}</label><select id="${id}" ${f.ro ? "disabled" : ""}></select></div>`;
+    }
+    if (f.key === "c.state") {
+      const code = prefectureSelectCodeFromRaw(val);
+      let opts = `<option value="">（未設定）</option>`;
+      opts += PREFS.map((lab, i) => {
+        const v = String(i + 1);
+        const sel = code === v ? " selected" : "";
+        return `<option value="${v}"${sel}>${esc(lab)}</option>`;
+      }).join("");
+      if (val && !code) opts += `<option value="${esc(val)}" selected>${esc(val)}</option>`;
+      return `<div class="${Number(it.oneLine)===1 ? "" : "full"}"><label>${label}</label><select id="${id}" ${f.ro ? "disabled" : ""}>${opts}</select></div>`;
     }
     const input = f.textarea
       ? `<textarea id="${id}" rows="2" ${f.ro ? "readonly" : ""}>${esc(val)}</textarea>`
@@ -1662,7 +1718,7 @@ async function load() {
     }
     refreshCacheStatus();
   } catch(e) {
-    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}<br><small>初回は「全件同期」でデータを取り込んでください。</small></div>`;
+    document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}<br><small>${isMasterRole() ? "初回は「全件同期」でデータを取り込んでください。" : "初回の全件取り込みはマスター権限のユーザーに依頼するか、マスターでログインして「全件同期」を実行してください。"}</small></div>`;
   }
 }
 
@@ -1706,6 +1762,10 @@ async function refreshCacheStatus() {
 }
 
 async function runSync(mode) {
+  if (mode === "full" && !isMasterRole()) {
+    alert("全件同期はマスター権限のみ実行できます。");
+    return;
+  }
   const b1 = document.getElementById("btnSyncInc");
   const b2 = document.getElementById("btnSyncFull");
   if (b1) b1.disabled = true;
@@ -1740,9 +1800,13 @@ function renderTable() {
         <p style="margin:0 0 12px;font-size:13px;color:rgb(90,100,115)">
           <strong>ダッシュボード</strong>の数値はデジタライズAPIから<strong>直接</strong>取得しています。
           <strong>顧客一覧</strong>は<strong>同期済みのローカルキャッシュ</strong>だけを表示します。
-          物件を追加した直後や初回は、下の<strong>「全件同期」</strong>でこの物件の顧客を取り込んでください。
+          ${isMasterRole()
+            ? "物件を追加した直後や初回は、下の<strong>「全件同期」</strong>でこの物件の顧客を取り込んでください。"
+            : "初回の全件取り込みは<strong>マスター権限</strong>のユーザーが「全件同期」で行ってください。ご自身がマスターでない場合は<strong>差分同期</strong>をご利用いただくか、マスターに依頼してください。"}
         </p>
-        <button type="button" class="btn btn-primary-solid btn-sm" onclick="runSync('full')">全件同期を実行</button>
+        ${isMasterRole()
+          ? `<button type="button" class="btn btn-primary-solid btn-sm" onclick="runSync('full')">全件同期を実行</button>`
+          : `<p style="margin:0;font-size:13px;color:rgb(90,100,115)">（全件同期ボタンはマスターにのみ表示されます）</p>`}
       </div>`;
     return;
   }
@@ -1829,13 +1893,17 @@ function updateSelBtn() {
 async function exportAll() {
   const allRows = await fetchAllFilteredCustomers();
   const cols = getAllCustomerFieldDefs(allRows);
-  exportCSV(allRows, cols.map((c) => fieldLabelOf(c.key)), cols.map((c) => c.key), "顧客一覧.csv");
+  exportCSV(allRows, cols.map((c) => fieldLabelOf(c.key)), cols.map((c) => c.key), "顧客一覧.csv", (k, v) =>
+    k === "c.state" ? prefectureDisplayLabel(v) : v
+  );
 }
 async function exportSelected() {
   const allRows = await fetchAllFilteredCustomers();
   const rows = allRows.filter(c=>selected.has(c["c.id"]));
   const cols = getAllCustomerFieldDefs(rows);
-  exportCSV(rows, cols.map((c) => fieldLabelOf(c.key)), cols.map((c) => c.key), "顧客一覧_選択.csv");
+  exportCSV(rows, cols.map((c) => fieldLabelOf(c.key)), cols.map((c) => c.key), "顧客一覧_選択.csv", (k, v) =>
+    k === "c.state" ? prefectureDisplayLabel(v) : v
+  );
 }
 
 async function printLabelsFromTemplate() {
@@ -1896,7 +1964,8 @@ function fillLabelTemplateSheet(ws, customer, labelsByKey) {
   const printVals = {};
   Object.keys(labelsByKey).forEach((k) => {
     const label = labelsByKey[k];
-    const v = customer[k] == null ? "" : String(customer[k]);
+    const raw = customer[k] == null ? "" : String(customer[k]);
+    const v = k === "c.state" ? prefectureDisplayLabel(customer[k]) : raw;
     printVals[k] = v;
     printVals[label] = v;
   });
@@ -1978,6 +2047,13 @@ function closeModal() {
   });
   document.getElementById("header").innerHTML = renderHeader("customer.html");
   initialCid = new URLSearchParams(location.search).get("cid") || "";
+  if (!isMasterRole()) {
+    const bf = document.getElementById("btnSyncFull");
+    if (bf) {
+      bf.style.display = "none";
+      bf.disabled = true;
+    }
+  }
   if (isAdminRole()) {
     document.getElementById("btnColConfig").style.display = "inline-block";
     document.getElementById("btnDetailConfigTop").style.display = "inline-block";

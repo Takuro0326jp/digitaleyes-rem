@@ -327,8 +327,23 @@ function statusBadge(v) {
   const map = { "資料請求・エントリー": "badge-entry", "新規来場": "badge-visit", "再来場": "badge-visit", "契約": "badge-contract", "引渡": "badge-contract", "検討中止": "badge-cancel" };
   return `<span class="badge-status ${map[v] || 'badge-entry'}">${v}</span>`;
 }
-function exportCSV(rows, headers, keys, filename) {
-  const csv = [headers.join(","), ...rows.map(r => keys.map(k => `"${(r[k]||"").toString().replace(/"/g,'""')}"`).join(","))].join("\n");
+function exportCSV(rows, headers, keys, filename, formatCell) {
+  const fmt =
+    typeof formatCell === "function"
+      ? formatCell
+      : (_k, v, _r) => v;
+  const csv = [
+    headers.join(","),
+    ...rows.map((r) =>
+      keys
+        .map((k) => {
+          const v = fmt(k, r[k], r);
+          const s = v == null ? "" : String(v);
+          return `"${s.replace(/"/g, '""')}"`;
+        })
+        .join(",")
+    ),
+  ].join("\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
 }

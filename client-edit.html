@@ -2,8 +2,15 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <script>
+    if (location.protocol !== "file:") {
+      const b = document.createElement("base");
+      b.href = location.origin + "/";
+      document.head.insertBefore(b, document.head.firstChild);
+    }
+  </script>
   <meta name="viewport" content="width=1300">
-  <title>クライアント編集 | Real Estate Manager by DIGITALEYES</title>
+  <title>企業情報の編集 | Real Estate Manager by DIGITALEYES</title>
   <link rel="stylesheet" href="common.css">
   <style>
     .crumb { font-size:12px; color:rgb(120,130,140); margin: 14px 0 6px; }
@@ -24,6 +31,8 @@
     }
     .fg input::placeholder { color:#9aa5b1; }
     .err { color:#cc0000; font-size:12px; margin-top:6px; display:none; }
+    .page-title-bar { align-items: flex-start; }
+    .page-title-bar > div:first-of-type { flex: 1; min-width: 0; padding-right: 16px; }
   </style>
 </head>
 <body>
@@ -31,9 +40,12 @@
 <div id="page-wrapper">
   <header class="header" id="header"></header>
   <main class="main">
-    <div class="crumb"><a href="dashboard.html">ダッシュボード</a> ＞ <a href="client.html">クライアント一覧</a> ＞ クライアント編集</div>
+    <div class="crumb"><a href="dashboard.html">ダッシュボード</a> ＞ <a href="client.html">クライアント一覧</a> ＞ <a id="crumbDetail" href="#">クライアント詳細</a> ＞ 企業情報の編集</div>
     <div class="page-title-bar">
-      <h1>クライアント編集</h1>
+      <div>
+        <h1 style="margin:0">企業情報の編集</h1>
+        <p style="margin:8px 0 0;font-size:13px;color:rgb(120,130,140)">企業名・フリガナ・E-mail・サイトタイプを変更します。物件の紐づけはクライアント詳細の「紐づく物件」から行ってください。</p>
+      </div>
       <a class="btn btn-sm" href="client.html">一覧へ戻る</a>
     </div>
 
@@ -60,21 +72,38 @@
 <script>
 let clientId = null;
 function idFromPath(){
-  const m = location.pathname.match(/\/client\/edit\/(\d+)/);
+  const m = location.pathname.match(/\/client\/edit\/([^/]+)/);
   if (m) return m[1];
   return new URLSearchParams(location.search).get("id");
 }
+function clientDetailHref(id) {
+  const sid = encodeURIComponent(String(id));
+  if (typeof location !== "undefined" && location.protocol === "file:") {
+    return `client-detail.html?id=${sid}`;
+  }
+  return `/client/detail/${sid}`;
+}
 function validEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s||"").trim()); }
 function setErr(id, msg) { const el = document.getElementById(id); el.textContent = msg; el.style.display = "block"; }
-function clearErr() { ["eName","eKana","eEmail"].forEach(id => { const el=document.getElementById(id); el.style.display="none"; el.textContent=""; }); document.getElementById("formMsg").style.display="none"; }
+function clearErr() { ["eName","eKana","eEmail"].forEach(id => { const el=document.getElementById(id); if(el){ el.style.display="none"; el.textContent=""; } }); const fm=document.getElementById("formMsg"); if(fm){ fm.style.display="none"; } }
 function closeConfirm(){ document.getElementById("confirmModal").style.display="none"; }
 
 async function load() {
   clientId = idFromPath();
   if (!clientId) { document.getElementById("content").innerHTML = '<div class="error-box">⚠️ IDが不正です</div>'; return; }
+  const detailLink = clientDetailHref(clientId);
+  const crumb = document.getElementById("crumbDetail");
+  if (crumb) { crumb.href = detailLink; }
   const res = await fetch(`${CONFIG.API_BASE}/client/api/detail?id=${encodeURIComponent(clientId)}`, { headers:{ Authorization:`Bearer ${Auth.getToken()}` } });
-  const d = await res.json();
-  if (!d.ok) { document.getElementById("content").innerHTML = `<div class="error-box">⚠️ ${d.message || "取得に失敗しました"}</div>`; return; }
+  const raw = await res.text();
+  let d;
+  try {
+    d = raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    document.getElementById("content").innerHTML = `<div class="error-box">⚠️ サーバーからの応答を解析できませんでした（HTTP ${res.status}）</div>`;
+    return;
+  }
+  if (!d.ok) { document.getElementById("content").innerHTML = `<div class="error-box">⚠️ ${escapeHtml(d.message || "取得に失敗しました")}</div>`; return; }
   const c = d.client;
   document.getElementById("content").innerHTML = `
     <div class="form-card">
@@ -94,9 +123,16 @@ async function load() {
           <input id="fEmail" type="email" autocomplete="email">
           <div class="err" id="eEmail"></div>
         </div>
+        <div class="fg fg--full">
+          <label for="fSiteType">サイトタイプ</label>
+          <select id="fSiteType">
+            <option value="0">デフォルト</option>
+            <option value="1">日鉄</option>
+          </select>
+        </div>
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px">
-        <a class="btn btn-sm" href="/client/detail/${clientId}" style="text-decoration:none">キャンセル</a>
+        <a class="btn btn-sm" href="${detailLink}" style="text-decoration:none">キャンセル</a>
         <button class="btn btn-primary-solid btn-sm" onclick="submitUpdate()">更新</button>
       </div>
       <div id="formMsg" class="error-box" style="display:none;margin-top:12px"></div>
@@ -104,6 +140,10 @@ async function load() {
   document.getElementById("fName").value = c.name || "";
   document.getElementById("fKana").value = c.nameKana || "";
   document.getElementById("fEmail").value = c.email || "";
+  document.getElementById("fSiteType").value = String(Number(c.siteType) === 1 ? 1 : 0);
+}
+function escapeHtml(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 }
 
 function submitUpdate() {
@@ -111,13 +151,14 @@ function submitUpdate() {
   const name = document.getElementById("fName").value.trim();
   const nameKana = document.getElementById("fKana").value.trim();
   const email = document.getElementById("fEmail").value.trim();
+  const siteType = Number(document.getElementById("fSiteType").value) === 1 ? 1 : 0;
   let ok = true;
   if (!name) { setErr("eName","必須です"); ok=false; }
   if (!nameKana) { setErr("eKana","必須です"); ok=false; }
   if (!email) { setErr("eEmail","必須です"); ok=false; }
   else if (!validEmail(email)) { setErr("eEmail","形式が不正です"); ok=false; }
   if (!ok) return;
-  window.__updatePayload = { name, nameKana, email };
+  window.__updatePayload = { name, nameKana, email, siteType };
   document.getElementById("confirmModal").style.display="flex";
 }
 
@@ -135,7 +176,7 @@ async function confirmUpdate() {
     document.getElementById("formMsg").style.display = "block";
     return;
   }
-  location.href = `/client/detail/${clientId}`;
+  location.href = clientDetailHref(clientId);
 }
 
 (async () => {

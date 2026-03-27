@@ -123,6 +123,14 @@ let clients = [];
 let selected = new Set();
 function validEmail(s){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s||"").trim()); }
 
+function clientDetailHref(id) {
+  const sid = encodeURIComponent(String(id));
+  if (typeof location !== "undefined" && location.protocol === "file:") {
+    return `client-detail.html?id=${sid}`;
+  }
+  return `/client/detail/${sid}`;
+}
+
 function updateDeleteUi() {
   document.getElementById("btnDelete").disabled = selected.size === 0;
   document.getElementById("btnToggleAll").textContent = (clients.length && selected.size === clients.length) ? "選択解除" : "全て選択";
@@ -138,7 +146,7 @@ function render() {
   let html = `<div class="table-scroll"><table class="list-table">
     <thead><tr>
       <th style="width:46px"><input type="checkbox" onclick="toggleAll()" ${selected.size===clients.length?"checked":""}></th>
-      <th>企業名</th><th>E-mail</th><th style="width:90px">詳細</th>
+      <th>企業名</th><th>E-mail</th><th style="width:140px">操作</th>
     </tr></thead><tbody>`;
   clients.forEach((c, idx) => {
     const checked = selected.has(String(c.id));
@@ -146,7 +154,7 @@ function render() {
       <td style="text-align:center"><input type="checkbox" ${checked?"checked":""} onchange="toggleOne('${c.id}')"></td>
       <td style="font-weight:700">${c.name || ""}</td>
       <td style="color:rgb(53,124,176)">${c.email || ""}</td>
-      <td><button class="btn btn-sm" onclick="openClientModal('${c.id}')">詳細</button></td>
+      <td><a class="btn btn-sm" href="${clientDetailHref(c.id)}">詳細を開く</a></td>
     </tr>`;
   });
   html += "</tbody></table></div>";
@@ -179,13 +187,12 @@ function closeClientModal() {
   document.getElementById("clientModal").style.display = "none";
 }
 
-function openClientModal(id = "") {
-  const c = id ? clients.find((x) => String(x.id) === String(id)) : null;
-  document.getElementById("mId").value = c ? c.id : "";
-  document.getElementById("mName").value = c?.name || "";
-  document.getElementById("mKana").value = c?.nameKana || "";
-  document.getElementById("mEmail").value = c?.email || "";
-  document.getElementById("clientModalTitle").textContent = c ? "クライアント詳細・編集" : "クライアント登録";
+function openClientModal() {
+  document.getElementById("mId").value = "";
+  document.getElementById("mName").value = "";
+  document.getElementById("mKana").value = "";
+  document.getElementById("mEmail").value = "";
+  document.getElementById("clientModalTitle").textContent = "クライアント登録";
   document.getElementById("mErr").style.display = "none";
   document.getElementById("mErr").textContent = "";
   document.getElementById("clientModal").style.display = "flex";

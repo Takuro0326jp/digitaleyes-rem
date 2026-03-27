@@ -222,6 +222,8 @@ function renderTable() {
   rows.forEach(a => {
     const propNames = (a.propertyIds || []).map((id) => propNameById(id)).filter(Boolean);
     const isMe = a.id === me?.id;
+    const isMasterUser = Number(a.role) === 1;
+    const delDisabled = isMe || isMasterUser;
     html += `<tr>
       <td style="font-weight:600">${a.name || ""}</td>
       <td style="color:rgb(53,124,176)">${a.email || ""}</td>
@@ -230,7 +232,7 @@ function renderTable() {
       <td>${remSeesAllProperties(a.role) ? "全物件" : (propNames.length ? propNames.join(" / ") : "―")}</td>
       <td><button class="btn btn-sm" ${canAdmin ? "" : "disabled"} onclick="sendInvite('${a.id}')">招待</button></td>
       <td><button class="btn btn-sm" onclick="openEdit('${a.id}')">詳細</button></td>
-      <td><button class="btn btn-sm" ${isMe ? "disabled" : ""} style="color:#cc0000;border-color:#cc0000" onclick="openDelete('${a.id}')">削除</button></td>
+      <td><button class="btn btn-sm" ${delDisabled ? "disabled" : ""} style="color:#cc0000;border-color:#cc0000" onclick="openDelete('${a.id}')">削除</button></td>
     </tr>`;
   });
   html += "</tbody></table></div>";
@@ -355,13 +357,13 @@ function updatePropFilterHint() {
   const client = document.getElementById("fClient").value.trim();
   if (!client) {
     hint.textContent =
-      "先にクライアントを選ぶと、そのクライアントに紐づいた物件だけが表示されます。物件側の設定は物件詳細の「紐づくクライアント」で行います。";
+      "先にクライアントを選ぶと、そのクライアントに紐づいた物件だけが表示されます。紐づけはクライアント詳細の「紐づく物件」で設定してください。";
     return;
   }
   const list = propsForSelectedClient();
   if (!list.length) {
     hint.textContent =
-      "このクライアントに紐づく物件がありません。各物件の詳細画面で「紐づくクライアント」を設定してください。";
+      "このクライアントに紐づく物件がありません。クライアント詳細の「紐づく物件」でチェックしてください。";
     return;
   }
   hint.textContent = `このクライアントに紐づく物件 ${list.length} 件を表示しています。`;
@@ -457,7 +459,7 @@ async function saveAccount() {
       setErr("eClient", "物件管理者では必須です");
       ok = false;
     } else if (!list.length) {
-      setErr("eProps", "このクライアントに紐づく物件がありません。物件詳細で紐づけを設定してください。");
+      setErr("eProps", "このクライアントに紐づく物件がありません。クライアント一覧の「詳細を開く」から「紐づく物件」で設定してください。");
       ok = false;
     } else if (propertyIds.length === 0) {
       setErr("eProps", "1件以上選択してください");
@@ -510,6 +512,7 @@ function openDelete(id) {
   if (id === me?.id) return;
   const a = accounts.find(x => x.id === id);
   if (!a) return;
+  if (Number(a.role) === 1) return;
   deleteId = id;
   document.getElementById("deleteText").textContent = `${a.name} のアカウントを削除します。この操作は取り消せません。`;
   document.getElementById("deleteModal").style.display = "flex";

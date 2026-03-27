@@ -2,6 +2,14 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <script>
+    /* /client/detail/... などのパスでは相対URLが /client/ 配下に解決され common.js が読めない。http(s) のときだけルート相対にする */
+    if (location.protocol !== "file:") {
+      const b = document.createElement("base");
+      b.href = location.origin + "/";
+      document.head.insertBefore(b, document.head.firstChild);
+    }
+  </script>
   <meta name="viewport" content="width=1300">
   <title>クライアント詳細 | Real Estate Manager by DIGITALEYES</title>
   <link rel="stylesheet" href="common.css">
@@ -26,7 +34,7 @@
     <div class="page-title-bar">
       <h1 id="title">クライアント詳細</h1>
       <div style="display:flex;gap:8px">
-        <a class="btn btn-sm" id="btnEdit" href="#">編集</a>
+        <a class="btn btn-sm" id="btnEdit" href="#">企業情報を編集</a>
         <a class="btn btn-sm" href="client.html">一覧へ戻る</a>
       </div>
     </div>
@@ -40,10 +48,21 @@
 <script>
 function dash(v){ return v==null || String(v).trim()==="" ? "―" : String(v); }
 function siteLabel(v){ return Number(v)===1 ? "日鉄" : "デフォルト"; }
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+}
 function idFromPath(){
   const m = location.pathname.match(/\/client\/detail\/(\d+)/);
   if (m) return m[1];
   return new URLSearchParams(location.search).get("id");
+}
+
+function clientEditHref(id) {
+  const sid = encodeURIComponent(String(id));
+  if (typeof location !== "undefined" && location.protocol === "file:") {
+    return `client-edit.html?id=${sid}`;
+  }
+  return `/client/edit/${sid}`;
 }
 
 async function toggleS3Form() {
@@ -87,18 +106,64 @@ async function saveS3(id) {
   await load();
 }
 
+async function saveLinkedProps() {
+  const id = idFromPath();
+  const cid = Number(id);
+  if (!cid) return;
+  const checks = document.querySelectorAll('input[name="linkProp"]:checked');
+  const propertyIds = [...checks].map((x) => x.value);
+  const res = await fetch(`${CONFIG.API_BASE}/client/api/linked-properties`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ clientId: cid, propertyIds }),
+  });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || !d.ok) {
+    alert(d.message || "紐づけの保存に失敗しました");
+    return;
+  }
+  alert("紐づけを保存しました");
+  await load();
+}
+
 async function load() {
   const id = idFromPath();
   if (!id) { document.getElementById("content").innerHTML = '<div class="error-box">⚠️ IDが不正です</div>'; return; }
-  document.getElementById("btnEdit").href = `/client/edit/${id}`;
-  const res = await fetch(`${CONFIG.API_BASE}/client/api/detail?id=${encodeURIComponent(id)}`, { headers:{ Authorization:`Bearer ${Auth.getToken()}` } });
-  const d = await res.json();
-  if (!d.ok) { document.getElementById("content").innerHTML = `<div class="error-box">⚠️ ${d.message || "取得に失敗しました"}</div>`; return; }
+  document.getElementById("btnEdit").href = clientEditHref(id);
+  const [res, linkRes] = await Promise.all([
+    fetch(`${CONFIG.API_BASE}/client/api/detail?id=${encodeURIComponent(id)}`, { headers:{ Authorization:`Bearer ${Auth.getToken()}` } }),
+    fetch(`${CONFIG.API_BASE}/client/api/linked-properties?id=${encodeURIComponent(id)}`, { headers:{ Authorization:`Bearer ${Auth.getToken()}` } }),
+  ]);
+  const rawDetail = await res.text();
+  let d;
+  try {
+    d = rawDetail ? JSON.parse(rawDetail) : {};
+  } catch (_) {
+    document.getElementById("content").innerHTML = `<div class="error-box">⚠️ サーバーからの応答を解析できませんでした（HTTP ${res.status}）</div>`;
+    return;
+  }
+  if (!d.ok) { document.getElementById("content").innerHTML = `<div class="error-box">⚠️ ${esc(d.message || "取得に失敗しました")}</div>`; return; }
+  let props = [];
+  try {
+    const linkD = await linkRes.json();
+    if (linkD.ok && Array.isArray(linkD.properties)) props = linkD.properties;
+  } catch (_) {}
+  const linkWarn = linkRes.ok ? "" : '<p class="error-box" style="margin:0 0 10px">紐づく物件一覧の取得に失敗しました。再読み込みしてください。</p>';
   const c = d.client;
   const s3 = d.s3 || {};
   document.getElementById("title").textContent = c.name || "クライアント詳細";
   const hours = Array.from({length:24},(_,i)=>String(i).padStart(2,"0"));
   const mins = Array.from({length:60},(_,i)=>String(i).padStart(2,"0"));
+  const propRows = props.length
+    ? props.map((p) => `
+      <label style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:1px solid #f0f0f0;cursor:pointer">
+        <input type="checkbox" name="linkProp" value="${esc(p.id)}" ${p.linked ? "checked" : ""}>
+        <span style="flex:1;min-width:0">
+          <span style="font-weight:600">${esc(p.name || p.id)}</span>
+          <span style="display:block;font-size:11px;color:rgb(120,130,140);margin-top:2px">紐づけ: ${p.clientName ? esc(p.clientName) : "―"}</span>
+        </span>
+      </label>`).join("")
+    : '<div style="color:rgb(120,130,140);font-size:13px">テナントに物件がまだありません。</div>';
   document.getElementById("content").innerHTML = `
     <div class="panel">
       <dl class="grid">
@@ -107,6 +172,15 @@ async function load() {
         <dt>E-mail</dt><dd>${dash(c.email)}</dd>
         <dt>サイトタイプ</dt><dd>${siteLabel(c.siteType)}</dd>
       </dl>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      ${linkWarn}
+      <div style="font-weight:800;margin-bottom:8px" id="section-linked-props">紐づく物件</div>
+      <p style="font-size:13px;color:rgb(120,130,140);margin:0 0 10px;line-height:1.55">一覧の「詳細を開く」でこの画面に来たうえで、下の一覧で物件にチェックを付けて保存してください。チェックを付けた物件をこのクライアント（企業名の一致）に紐づけます。外すと<strong>このクライアントとの紐づけのみ</strong>解除されます。物件管理者のアカウント設定では、ここで紐づけた物件だけが候補になります。</p>
+      <div style="max-height:320px;overflow:auto;border:1px solid rgb(234,234,234);border-radius:6px;padding:4px 10px;background:#fafafa">${propRows}</div>
+      <div style="margin-top:12px">
+        <button type="button" class="btn btn-primary-solid btn-sm" onclick="saveLinkedProps()">紐づけを保存</button>
+      </div>
     </div>
     <div class="panel" style="margin-top:12px">
       <div style="display:flex;justify-content:space-between;align-items:center">

@@ -257,27 +257,6 @@ async function loadDetail() {
     document.getElementById("content").innerHTML = '<div class="error-box">⚠️ 該当の物件が見つかりません。</div>';
     return;
   }
-  let linkedClientOptionsHtml = "";
-  if (isAdmin()) {
-    try {
-      const cr = await fetch(`${CONFIG.API_BASE}/client/master`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
-      const cd = await cr.json();
-      const clist = cd.ok && Array.isArray(cd.clients) ? cd.clients : [];
-      const cur = String(p.clientName || "").trim();
-      linkedClientOptionsHtml =
-        '<option value="">（未設定）</option>' +
-        clist
-          .map((c) => {
-            const n = String(c.name || "").trim();
-            if (!n) return "";
-            const sel = n === cur ? " selected" : "";
-            return `<option value="${attrEsc(n)}"${sel}>${attrEsc(n)}</option>`;
-          })
-          .join("");
-    } catch (_) {
-      linkedClientOptionsHtml = '<option value="">（一覧取得に失敗）</option>';
-    }
-  }
   const statusText = salesLabel(p);
   const created = dateOnly(p.createdAt || p.created_at || "");
   const updated = dateOnly(p.updatedAt || p.updated_at || "");
@@ -308,18 +287,6 @@ async function loadDetail() {
           <div class="card"><div class="k">竣工予定日</div><div class="v" style="font-size:16px">${dateOnly(completion)}</div></div>
         </div>
       </section>
-
-      ${isAdmin() ? `
-      <section class="panel">
-        <div class="sec-head">
-          <h2>紐づくクライアント</h2>
-          <button class="btn btn-sm" data-save-kind="linked-client" onclick="saveLinkedClient()">保存</button>
-        </div>
-        <p class="meta" style="margin:0 0 12px;line-height:1.5">アカウント設定で不動産担当者に「担当物件」を割り当てるとき、ここで選んだクライアントと一致する物件だけが一覧に表示されます。</p>
-        <dl class="detail-grid">
-          <dt>クライアント名</dt><dd><select id="fLinkedClient" class="field-input">${linkedClientOptionsHtml}</select></dd>
-        </dl>
-      </section>` : ""}
 
       <section class="panel">
         <div class="sec-head">
@@ -447,21 +414,6 @@ async function patchMeta(patch) {
   const d = await res.json();
   if (!res.ok || !d.ok) throw new Error(d.message || "保存に失敗しました");
   return d.property;
-}
-
-async function saveLinkedClient() {
-  if (!isAdmin()) return;
-  const el = document.getElementById("fLinkedClient");
-  if (!el) return;
-  try {
-    await patchMeta({ clientName: el.value.trim() });
-    alert("紐づくクライアントを保存しました");
-    setPropertyDirty(false);
-    clearDirtyInputs();
-    await loadDetail();
-  } catch (e) {
-    alert(e.message);
-  }
 }
 
 async function saveGalleryS3() {

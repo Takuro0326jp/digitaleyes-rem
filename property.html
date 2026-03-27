@@ -101,6 +101,10 @@ function valueOrDash(v) {
   return v === undefined || v === null || String(v).trim() === "" ? "―" : String(v);
 }
 
+function escJsSingle(v) {
+  return String(v).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
 function statusOf(p) {
   return p.salesStatus || (p.isSoldOut ? "完売" : "販売中");
 }
@@ -204,8 +208,8 @@ function renderTable() {
         </thead>
         <tbody>
           ${rows.map((r) => `
-            <tr class="row-clickable" onclick="onPropertyRowClick(event, ${JSON.stringify(r.id)})">
-              <td onclick="event.stopPropagation()"><input type="checkbox" ${selectedIds.has(r.id) ? "checked" : ""} onchange="toggleSelectOne('${r.id}')"></td>
+            <tr class="row-clickable" onclick="onPropertyRowClick(event, '${escJsSingle(r.id)}')">
+              <td class="no-row-nav" onclick="event.stopPropagation()"><input type="checkbox" ${selectedIds.has(r.id) ? "checked" : ""} onchange="toggleSelectOne('${escJsSingle(r.id)}')"></td>
               <td>
                 <div class="property-cell">
                   <div class="thumb">
@@ -218,11 +222,11 @@ function renderTable() {
               <td>${valueOrDash(r.buildingConfirmDate)}</td>
               <td>${valueOrDash(r.remainingRate)}</td>
               <td>${valueOrDash(r.completionDate)}</td>
-              <td onclick="event.stopPropagation()" title="ログイン後、この物件を最初に表示します">
-                <input type="radio" name="loginDefaultProp" ${String(loginDefaultId) === String(r.id) ? "checked" : ""} onclick="event.stopPropagation()" onchange="onLoginDefaultPick(${JSON.stringify(r.id)})">
+              <td class="no-row-nav" onclick="event.stopPropagation()" onmousedown="event.stopPropagation()" title="ログイン後、この物件を最初に表示します">
+                <input type="radio" name="loginDefaultProp" ${String(loginDefaultId) === String(r.id) ? "checked" : ""} onclick="event.stopPropagation()" onchange="onLoginDefaultPick('${escJsSingle(r.id)}')">
               </td>
-              <td onclick="event.stopPropagation()"><a href="property-detail.html?id=${encodeURIComponent(r.id)}">詳細</a></td>
-              <td onclick="event.stopPropagation()"><button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="openSingleDeleteModal('${r.id}')">削除</button></td>
+              <td class="no-row-nav" onclick="event.stopPropagation()"><a href="property-detail.html?id=${encodeURIComponent(r.id)}">詳細</a></td>
+              <td class="no-row-nav" onclick="event.stopPropagation()"><button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="openSingleDeleteModal('${escJsSingle(r.id)}')">削除</button></td>
             </tr>
           `).join("")}
         </tbody>
@@ -311,6 +315,7 @@ async function onLoginDefaultPick(id) {
     loginDefaultId = readLoginDefaultIdForUi();
     document.getElementById("header").innerHTML = renderHeader("property.html");
     updateClearLoginDefaultBtn();
+    renderTable();
   } catch (e) {
     alert(e.message || "設定に失敗しました");
     renderTable();
@@ -363,10 +368,10 @@ function goDetail(id) {
   location.href = `property-detail.html?id=${encodeURIComponent(id)}`;
 }
 
-/** 行クリックで詳細へ。input / link / button 上のクリックは無視（ラジオ操作で詳細に飛ばない） */
+/** 行クリックで詳細へ。チェック・ラジオ・リンク・操作列は除外（ラジオ列の余白クリックで詳細に飛ぶのを防ぐ） */
 function onPropertyRowClick(ev, id) {
   const el = ev.target;
-  if (el && el.closest && el.closest("input, button, a, label")) return;
+  if (el && el.closest && el.closest(".no-row-nav, input, button, a, label")) return;
   goDetail(id);
 }
 

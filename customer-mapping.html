@@ -264,6 +264,8 @@ function setMultiSelected(id, values){
 }
 function clearMulti(id){ setMultiSelected(id, []); }
 function norm(v){return String(v||"").trim();}
+/** 一覧APIの payload と DB 列のどちらかにステータスがあれば使う */
+function customerStatus(c){ return norm(pick(c, "c.status", "status")); }
 function ymd(v){const s=norm(v).replace(/\//g,"-");return s.slice(0,10);}
 function pick(c, ...keys){for(const k of keys){if(c[k]!=null&&String(c[k]).trim()!=="") return c[k];}return "";}
 function addrOf(c){return [pick(c,"c.zip"),pick(c,"c.state"),pick(c,"c.city"),pick(c,"c.town"),pick(c,"c.address"),pick(c,"c.tatemono")].filter(Boolean).join(" ");}
@@ -331,7 +333,7 @@ function csv(rows, headers, keys, filename){const text=[headers.join(","),...row
 function currentMapRows(){
   if (!statusCardFilter) return filteredCustomers;
   const target = norm(statusCardFilter);
-  return filteredCustomers.filter((c)=>norm(c["c.status"])===target);
+  return filteredCustomers.filter((c)=>customerStatus(c)===target);
 }
 function setStatusCardFilter(v){
   const next = norm(v);
@@ -377,14 +379,14 @@ function applyFilters(){
     if(name && !(`${norm(c["c.name"])} ${norm(c["c.kana"])} ${addrOf(c)}`.toLowerCase().includes(name))) return false;
     if(pre.length && !pre.includes(norm(c["c.state"]))) return false;
     if(media.length && !media.includes(norm(c["c.baitai"]))) return false;
-    if(status.length && !status.includes(norm(c["c.status"]))) return false;
+    if(status.length && !status.includes(customerStatus(c))) return false;
     if(income.length && !income.includes(norm(c["c.questionnaire30"]))) return false;
     if(number.length && !number.includes(norm(c["c.ninzu"]))) return false;
     if(budget.length && !budget.includes(norm(c["c.yosan"]))) return false;
     if(funds.length && !funds.includes(norm(c["c.jikosikin"]))) return false;
     if(layout.length && !layout.includes(norm(c["c.questionnaire23"]))) return false;
     if(size.length && !size.includes(norm(c["c.questionnaire24"]))) return false;
-    if(nStatus.length && nStatus.includes(norm(c["c.status"]))) {
+    if(nStatus.length && nStatus.includes(customerStatus(c))) {
       const sd=ymd(c["c.status_changed_at"]||c["c.upd_date"]);
       if((!nStatusStart||sd>=nStatusStart)&&(!nStatusEnd||sd<=nStatusEnd)) return false;
     }
@@ -416,7 +418,7 @@ function renderCards(){
   const configured = (VISIT_STATUSES_LIST.length ? VISIT_STATUSES_LIST : FALLBACK_VISIT_STATUSES).map((s)=>norm(s)).filter(Boolean);
   const observedSet = new Set(
     filteredCustomers
-      .map((c)=>norm(c["c.status"]))
+      .map((c)=>customerStatus(c))
       .filter(Boolean)
   );
   const statuses = [...new Set([...configured, ...observedSet])];
@@ -424,7 +426,7 @@ function renderCards(){
   let html = `<div class="status-card clickable ${allActive ? "active" : ""}" data-filter="__all__"><div class="k">全件</div><div class="v">${total}<span style="font-size:12px">件</span></div></div>`;
   for (const st of statuses) {
     const stNorm = norm(st);
-    const cnt = filteredCustomers.filter((c) => norm(c["c.status"]) === stNorm).length;
+    const cnt = filteredCustomers.filter((c) => customerStatus(c) === stNorm).length;
     const active = norm(statusCardFilter) === stNorm;
     html += `<div class="status-card clickable ${active ? "active" : ""}" data-filter="${encodeURIComponent(st)}"><div class="k">${escapeHtml(st)}</div><div class="v">${cnt}<span style="font-size:12px">件</span></div></div>`;
   }
@@ -478,7 +480,7 @@ async function renderMap(){
   for(const c of list){
     const addr=addrOf(c); if(!addr) continue;
     const pos=await geocodeAddress(addr); if(!pos) continue;
-    const fill=markerColor(norm(c["c.status"]));
+    const fill=markerColor(customerStatus(c));
     const m=new google.maps.Marker({map,position:pos,icon:{path:google.maps.SymbolPath.CIRCLE,scale:6,fillColor:fill,fillOpacity:0.95,strokeColor:"#fff",strokeWeight:1}});
     m.addListener("click",()=>{
       const cid = encodeURIComponent(String(c["c.id"]||""));
@@ -533,7 +535,7 @@ async function exportTargets(){
   const today=new Date().toISOString().slice(0,10); document.getElementById("stat2").value=today;
   applyLegendColors();
   allCustomers=await fetchAllCustomers();
-  const observedStatuses = [...new Set(allCustomers.map((c)=>norm(c["c.status"])).filter(Boolean))];
+  const observedStatuses = [...new Set(allCustomers.map((c)=>customerStatus(c)).filter(Boolean))];
   const mergedStatusOptions = [...new Set([...(VISIT_STATUSES_LIST.length ? VISIT_STATUSES_LIST : FALLBACK_VISIT_STATUSES).map((s)=>norm(s)).filter(Boolean), ...observedStatuses])];
   fillMulti("fStatus", mergedStatusOptions);
   fillMulti("nStatus", mergedStatusOptions);

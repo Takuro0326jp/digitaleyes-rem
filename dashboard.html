@@ -381,6 +381,11 @@ async function loadDashboard() {
       ? `<img src="${active.thumbnailUrl}" alt="物件画像" style="width:273px;height:295px;object-fit:cover;display:block;border:1px solid rgba(224,224,224,0.8)">`
       : `<div style="width:273px;height:295px;background:rgba(224,224,224,0.4);display:flex;align-items:center;justify-content:center;color:rgb(150,160,170);font-size:13px">物件画像</div>`;
 
+    const dashIsMaster = Number(Auth.getUser()?.role || 0) === 1;
+    const localSyncHintFollow = dashIsMaster
+      ? `<a href="customer.html" style="color:rgb(53,124,176);font-weight:600">顧客一覧</a>で「全件同期」を実行してください。`
+      : `一覧の初回取り込みは<strong>マスター</strong>が<a href="customer.html" style="color:rgb(53,124,176);font-weight:600">顧客一覧</a>で「全件同期」を実行してください。マスターでない場合は<strong>差分同期</strong>をご利用ください。`;
+
     document.getElementById("mainContent").innerHTML = `
       ${showLocalSyncHint ? `
       <section class="section" style="padding-top:12px;padding-bottom:0">
@@ -388,7 +393,7 @@ async function loadDashboard() {
           <strong>顧客一覧・マッピングとの違い</strong>
           <p style="margin:8px 0 0;font-size:13px;line-height:1.55">
             この画面の集計は<strong>デジタライズAPIから直接</strong>取得しています。一覧・マッピングは<strong>同期済みローカルDB</strong>のみを参照し、同一メールの行は<strong>1件に統合</strong>して件数表示します。新規物件では一覧が空でもここに数値が出ることがあります。
-            <a href="customer.html" style="color:rgb(53,124,176);font-weight:600">顧客一覧</a>で「全件同期」を実行してください。
+            ${localSyncHintFollow}
           </p>
         </div>
       </section>` : ""}

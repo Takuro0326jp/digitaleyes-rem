@@ -102,11 +102,14 @@ async function load() {
     const all = await fetchAllCustomersForPortal();
     const total = all.length;
     if (!total) {
+      const adEmptySyncHint = Number(Auth.getUser()?.role || 0) === 1
+        ? "顧客一覧で<strong>差分同期</strong>または<strong>全件同期</strong>を実行してから再度お試しください。"
+        : "顧客一覧で<strong>差分同期</strong>を実行するか、マスターに<strong>全件同期</strong>を依頼してから再度お試しください。";
       document.getElementById("content").innerHTML = `
         <section class="section" style="padding-top:24px;max-width:640px">
           <div class="error-box" style="border-color:#ffcc80;background:#fff8e1;color:rgb(70,83,98)">
             <p style="margin:0 0 8px;font-weight:600">表示する反響データがありません</p>
-            <p style="margin:0;line-height:1.55;font-size:13px">顧客一覧で<strong>差分同期</strong>または<strong>全件同期</strong>を実行してから再度お試しください。</p>
+            <p style="margin:0;line-height:1.55;font-size:13px">${adEmptySyncHint}</p>
             <p style="margin:12px 0 0"><a href="customer.html" class="btn btn-primary-solid" style="display:inline-block;text-decoration:none">顧客一覧へ</a></p>
           </div>
         </section>`;

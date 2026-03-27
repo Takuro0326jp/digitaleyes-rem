@@ -35,6 +35,7 @@ const {
   updateProperty,
   deleteProperty,
   updatePropertyMeta,
+  syncPropertiesClientName,
   listPropertyUpdateHistory,
   listPropertyImages,
   addPropertyImage,
@@ -175,7 +176,11 @@ async function saveUsers(users) {
   const curIds = new Set(current.map((u) => String(u.id)));
   const nextIds = new Set(users.map((u) => String(u.id)));
   for (const id of curIds) {
-    if (!nextIds.has(id)) await userStore.deleteUserById(id);
+    if (!nextIds.has(id)) {
+      const victim = current.find((u) => String(u.id) === id);
+      if (victim && isMaster(victim.role)) continue;
+      await userStore.deleteUserById(id);
+    }
   }
   for (const u of users) {
     const id = String(u.id);
@@ -210,6 +215,16 @@ function canManageAccounts(me) {
 
 function canManageClients(me) {
   return me && isAdminLike(me.role);
+}
+
+function assertClientRecordAccess(me, clientRow) {
+  if (!me || !clientRow) return { ok: false, message: "権限がありません" };
+  if (isMaster(me.role)) return { ok: true };
+  if (!isAdminLike(me.role)) return { ok: false, message: "権限がありません" };
+  if (String(me.client || "").trim() !== String(clientRow.name || "").trim()) {
+    return { ok: false, message: "このクライアントを操作する権限がありません" };
+  }
+  return { ok: true };
 }
 
 // ── セッション管理（メモリ） ───────────────────
@@ -467,8 +482,55 @@ const server = http.createServer(async (req, res) => {
     const id = fullUrl.searchParams.get("id");
     const c = await getClient(me.tenantId, id);
     if (!c) { json(res, 404, { ok: false, message: "見つかりません" }); return; }
+    const ac = assertClientRecordAccess(me, c);
+    if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
     const s3 = await getClientS3Settings(me.tenantId, c.id);
     json(res, 200, { ok: true, client: c, s3 });
+    return;
+  }
+
+  if (urlPath === "/client/api/linked-properties" && req.method === "GET") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    const me = await currentUserFromSession(session);
+    if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    const id = fullUrl.searchParams.get("id");
+    const c = await getClient(me.tenantId, id);
+    if (!c) { json(res, 404, { ok: false, message: "見つかりません" }); return; }
+    const ac = assertClientRecordAccess(me, c);
+    if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
+    const clientName = String(c.name || "").trim();
+    const all = await listPropertiesByUser(me.tenantId);
+    const properties = all.map((p) => {
+      const cur = String(p.clientName || "").trim();
+      return {
+        id: p.id,
+        name: p.name || "",
+        clientName: cur,
+        linked: cur === clientName,
+      };
+    });
+    json(res, 200, { ok: true, client: { id: c.id, name: c.name }, properties });
+    return;
+  }
+
+  if (urlPath === "/client/api/linked-properties" && req.method === "PUT") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    const me = await currentUserFromSession(session);
+    if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    try {
+      const body = await readBody(req);
+      const c = await getClient(me.tenantId, body.clientId);
+      if (!c) { json(res, 404, { ok: false, message: "クライアントが見つかりません" }); return; }
+      const ac = assertClientRecordAccess(me, c);
+      if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
+      const propertyIds = Array.isArray(body.propertyIds) ? body.propertyIds : [];
+      await syncPropertiesClientName(me.tenantId, c.name, propertyIds, me.name || "");
+      json(res, 200, { ok: true });
+    } catch (e) {
+      json(res, 400, { ok: false, message: e.message || String(e) });
+    }
     return;
   }
 
@@ -480,6 +542,10 @@ const server = http.createServer(async (req, res) => {
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/client/edit/".length));
     try {
+      const existing = await getClient(me.tenantId, id);
+      if (!existing) { json(res, 404, { ok: false, message: "見つかりません" }); return; }
+      const ac = assertClientRecordAccess(me, existing);
+      if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
       const body = await readBody(req);
       const c = await updateClient(me.tenantId, id, body || {});
       json(res, 200, { ok: true, client: c });
@@ -497,6 +563,13 @@ const server = http.createServer(async (req, res) => {
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const body = await readBody(req);
     const ids = body.ids || [];
+    for (const cid of ids) {
+      const row = await getClient(me.tenantId, cid);
+      if (row) {
+        const ac = assertClientRecordAccess(me, row);
+        if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
+      }
+    }
     const r = await deleteClients(me.tenantId, ids);
     json(res, 200, { ok: true, ...r });
     return;
@@ -510,6 +583,10 @@ const server = http.createServer(async (req, res) => {
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/client/s3/save/".length));
     try {
+      const row = await getClient(me.tenantId, id);
+      if (!row) { json(res, 404, { ok: false, message: "見つかりません" }); return; }
+      const ac = assertClientRecordAccess(me, row);
+      if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
       const body = await readBody(req);
       const saved = await saveClientS3Settings(me.tenantId, id, body || {});
       json(res, 200, { ok: true, s3: saved });
@@ -526,6 +603,11 @@ const server = http.createServer(async (req, res) => {
     const me = await currentUserFromSession(session);
     if (!canManageClients(me)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/client/s3/test/".length));
+    const testRow = await getClient(me.tenantId, id);
+    if (testRow) {
+      const ac = assertClientRecordAccess(me, testRow);
+      if (!ac.ok) { json(res, 403, { ok: false, message: ac.message }); return; }
+    }
     try {
       const body = await readBody(req);
       const region = String(body.region || "");
@@ -563,7 +645,17 @@ const server = http.createServer(async (req, res) => {
     if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const { name, databaseId, databasePassword, tableName } = await readBody(req);
     if (!name || !databaseId || !tableName) { json(res, 400, { ok: false, message: "必須項目が不足しています" }); return; }
-    const newProp = await createProperty(me.tenantId, { name, databaseId, databasePassword: databasePassword || "", tableName });
+    const createPayload = {
+      name,
+      databaseId,
+      databasePassword: databasePassword || "",
+      tableName,
+    };
+    if (normalizeRole(me.role) === ROLE.CLIENT_ADMIN) {
+      const cn = String(me.client || "").trim();
+      if (cn) createPayload.clientName = cn;
+    }
+    const newProp = await createProperty(me.tenantId, createPayload);
     // 初回追加時はアクティブに設定
     const users = await loadUsers();
     const ui = users.findIndex(u => u.id === session.userId);
@@ -720,7 +812,7 @@ const server = http.createServer(async (req, res) => {
       const pid = raw == null || raw === "" ? null : String(raw);
       const propsAll = await listPropertiesByUser(me.tenantId);
       const visible = visiblePropsForUser(me, propsAll);
-      if (pid && !visible.some((p) => String(p.id) === pid)) {
+      if (pid && !visible.some((p) => String(p.id) === String(pid))) {
         json(res, 400, { ok: false, message: "指定の物件にアクセスできません" });
         return;
       }
@@ -1019,8 +1111,8 @@ const server = http.createServer(async (req, res) => {
     const users = await loadUsers();
     const victim = users.find((u) => u.id === id && u.tenantId === me.tenantId);
     if (!victim) { json(res, 404, { ok: false, message: "対象が見つかりません" }); return; }
-    if (isMaster(victim.role) && !isMaster(me.role)) {
-      json(res, 403, { ok: false, message: "マスターアカウントの削除はマスターのみが行えます" });
+    if (isMaster(victim.role)) {
+      json(res, 400, { ok: false, message: "マスター権限のユーザーは削除できません" });
       return;
     }
     await saveUsers(users.filter((u) => !(u.id === id && u.tenantId === me.tenantId)));
@@ -1456,8 +1548,14 @@ const server = http.createServer(async (req, res) => {
     try {
       const prop = await getActivePropertyForUser(session.userId);
       if (!prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
+      const me = await currentUserFromSession(session);
+      if (!me) { json(res, 401, { ok: false, message: "認証が必要です。" }); return; }
       const body = await readBody(req);
       const mode = body.mode === "full" ? "full" : "incremental";
+      if (mode === "full" && !isMaster(me.role)) {
+        json(res, 403, { ok: false, message: "全件同期はマスター権限のみ実行できます。" });
+        return;
+      }
       const result = await runCustomerSync(prop, ENV, mode);
       json(res, 200, result);
     } catch (e) {
