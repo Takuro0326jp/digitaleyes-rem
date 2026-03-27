@@ -14,6 +14,8 @@ const {
   listCustomerReactions,
   listSalesHistory,
   addSalesHistory,
+  updateSalesHistory,
+  deleteSalesHistory,
   listCustomerFiles,
   addCustomerFile,
   deleteCustomerFile,
@@ -69,18 +71,28 @@ const {
 const {
   buildAssetKey,
   createUploadPresignedUrl,
+  ensureBucketCors,
   createReadSignedUrl,
+  uploadObjectDirect,
   removeObject,
 } = require("./lib/s3-media");
 const { s3ConfigFromProperty } = require("./lib/media-s3");
 const { S3Client, HeadBucketCommand } = require("@aws-sdk/client-s3");
-const { sendAccountInviteMail, hasSmtpEnv } = require("./lib/mailer");
+const { sendAccountInviteMail, sendSmtpTestMail, sendLoginOtpMail, hasSmtpEnv } = require("./lib/mailer");
 const { buildWeeklyReportBuffer } = require("./lib/weekly-report");
 const { buildCustomerAnalysisReport } = require("./lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("./lib/customer-karte-export");
 const userStore = require("./lib/user-store");
+const { applyLoginDefaultToUser } = require("./lib/login-default");
+const {
+  ROLE,
+  normalizeRole,
+  isPropertyScopedRole,
+  isAdminLike,
+  isMaster,
+  canUsePropertyMediaRoles,
+} = require("./lib/roles");
 
-const PORT = 3001;
 const API_HOST = "api.digital-eyes.jp";
 const DATA_DIR = path.join(__dirname, "data");
 
@@ -102,6 +114,7 @@ const ENV = loadEnv();
 for (const [k, v] of Object.entries(ENV)) {
   if (typeof v === "string" && v !== "" && process.env[k] === undefined) process.env[k] = v;
 }
+const PORT = Number(process.env.PORT) || 3001;
 console.log(`✅ SECRET_ID: ${ENV.SECRET_ID ? ENV.SECRET_ID.slice(0,6)+"***" : "⚠️ 未設定"}`);
 const { resolveDatabaseUrl } = require("./lib/sync-db");
 const _resolvedSync = resolveDatabaseUrl();
@@ -122,18 +135,34 @@ function writeJSON(file, data) {
 }
 
 function normalizeUser(u) {
-  const role = u.role ?? u.roleId ?? 2; // 2: 管理者, 3: 不動産担当者
+  const roleRaw = u.role ?? u.roleId ?? 2;
   const tenantId = u.tenantId ?? u.clientId ?? "1";
   const client = u.client ?? "株式会社ワールド・エステート";
   const propertyIds = Array.isArray(u.propertyIds) ? u.propertyIds.map(String) : [];
+  const ld = u.loginDefaultPropertyId;
   return {
     ...u,
-    role: Number(role) === 3 ? 3 : 2,
+    role: normalizeRole(roleRaw),
     tenantId: String(tenantId),
     client: String(client),
     propertyIds,
     name: u.name || [u.lastName, u.firstName].filter(Boolean).join(" ") || "",
+    loginDefaultPropertyId:
+      ld != null && String(ld).trim() !== "" ? String(ld) : null,
   };
+}
+
+/** 物件管理者: propertyIds は文字列化済み。物件 id は数値のことがあるため String で突き合わせる */
+function visiblePropsForUser(user, propsAll) {
+  if (!user || !isPropertyScopedRole(user.role)) return propsAll;
+  const idSet = new Set((user.propertyIds || []).map(String));
+  return propsAll.filter((p) => idSet.has(String(p.id)));
+}
+
+function role3MayAccessPropertyId(user, propertyId) {
+  if (!user || !isPropertyScopedRole(user.role)) return true;
+  if (!Array.isArray(user.propertyIds)) return false;
+  return new Set(user.propertyIds.map(String)).has(String(propertyId));
 }
 
 async function loadUsers() {
@@ -156,8 +185,9 @@ async function saveUsers(users) {
 }
 
 async function currentUserFromSession(session) {
+  const sid = String(session.userId ?? "");
   const users = await loadUsers();
-  return users.find((u) => u.id === session.userId) || null;
+  return users.find((u) => String(u.id) === sid) || null;
 }
 
 function publicUser(u) {
@@ -170,19 +200,21 @@ function publicUser(u) {
     client: u.client,
     propertyIds: u.propertyIds || [],
     activePropertyId: u.activePropertyId || null,
+    loginDefaultPropertyId: u.loginDefaultPropertyId || null,
   };
 }
 
 function canManageAccounts(me) {
-  return me && me.role === 2;
+  return me && isAdminLike(me.role);
 }
 
 function canManageClients(me) {
-  return me && me.role === 2;
+  return me && isAdminLike(me.role);
 }
 
 // ── セッション管理（メモリ） ───────────────────
 const sessions = new Map(); // token -> { userId, createdAt }
+const loginChallenges = new Map(); // challengeToken -> { userId, codeHash, exp }
 
 function createSession(userId) {
   const token = crypto.randomBytes(32).toString("hex");
@@ -198,6 +230,27 @@ function getSession(token) {
 function deleteSession(token) { sessions.delete(token); }
 
 function sha256(str) { return crypto.createHash("sha256").update(str).digest("hex"); }
+function generateOtpCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
+function createLoginChallenge(userId, code) {
+  const token = crypto.randomBytes(24).toString("hex");
+  loginChallenges.set(token, { userId: String(userId), codeHash: sha256(String(code)), exp: Date.now() + 10 * 60 * 1000 });
+  return token;
+}
+function verifyLoginChallenge(token, code) {
+  const row = loginChallenges.get(String(token || ""));
+  if (!row) return null;
+  if (Date.now() > Number(row.exp || 0)) { loginChallenges.delete(String(token || "")); return null; }
+  if (sha256(String(code || "").trim()) !== row.codeHash) return null;
+  loginChallenges.delete(String(token || ""));
+  return row;
+}
+function randomTempPassword(len = 12) {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const buf = crypto.randomBytes(len);
+  let s = "";
+  for (let i = 0; i < len; i++) s += chars[buf[i] % chars.length];
+  return s;
+}
 
 // ── ルーティングヘルパー ────────────────────────
 function getToken(req) {
@@ -223,8 +276,8 @@ async function getActivePropertyForUser(userId) {
   const user = users.find((u) => u.id === userId);
   if (!user) return null;
   const propsAll = await listPropertiesByUser(user.tenantId);
-  const props = user.role === 3 ? propsAll.filter((p) => user.propertyIds.includes(p.id)) : propsAll;
-  return props.find((p) => p.id === user.activePropertyId) || null;
+  const props = visiblePropsForUser(user, propsAll);
+  return props.find((p) => String(p.id) === String(user.activePropertyId)) || null;
 }
 
 // ── MIME ───────────────────────────────────────
@@ -277,9 +330,49 @@ const server = http.createServer(async (req, res) => {
       (u) => String(u.email || "").toLowerCase() === em && u.password === sha256(password)
     );
     if (!user) { json(res, 401, { ok: false, message: "メールアドレスまたはパスワードが正しくありません" }); return; }
+    if (String(process.env.REM_SKIP_2FA || "").trim() === "1") {
+      let u = user;
+      u = await applyLoginDefaultToUser(u, {
+        listPropertiesByUser,
+        updateUser: (x) => userStore.updateUser(x),
+      });
+      const token = createSession(u.id);
+      const propsAll = await listPropertiesByUser(u.tenantId);
+      const props = visiblePropsForUser(u, propsAll);
+      json(res, 200, { ok: true, token, user: publicUser(u), properties: props });
+      return;
+    }
+    if (!hasSmtpEnv(process.env)) {
+      json(res, 400, { ok: false, message: "2段階認証に必要なSMTPが未設定です。管理者にお問い合わせください。" });
+      return;
+    }
+    let code = "";
+    try {
+      code = generateOtpCode();
+      await sendLoginOtpMail(process.env, { email: user.email, name: user.name || "", code });
+    } catch (e) {
+      json(res, 500, { ok: false, message: e.message || "認証コード送信に失敗しました" });
+      return;
+    }
+    const challengeToken = createLoginChallenge(user.id, code);
+    json(res, 200, { ok: true, requires2fa: true, challengeToken, message: "認証コードをメール送信しました。10分以内に入力してください。" });
+    return;
+  }
+
+  if (urlPath === "/auth/verify-2fa" && req.method === "POST") {
+    const { challengeToken, code } = await readBody(req);
+    const ch = verifyLoginChallenge(challengeToken, code);
+    if (!ch) { json(res, 401, { ok: false, message: "認証コードが不正、または有効期限切れです" }); return; }
+    const users = await loadUsers();
+    let user = users.find((u) => String(u.id) === String(ch.userId));
+    if (!user) { json(res, 401, { ok: false, message: "認証対象ユーザーが見つかりません" }); return; }
+    user = await applyLoginDefaultToUser(user, {
+      listPropertiesByUser,
+      updateUser: (x) => userStore.updateUser(x),
+    });
     const token = createSession(user.id);
     const propsAll = await listPropertiesByUser(user.tenantId);
-    const props = user.role === 3 ? propsAll.filter((p) => user.propertyIds.includes(p.id)) : propsAll;
+    const props = visiblePropsForUser(user, propsAll);
     json(res, 200, { ok: true, token, user: publicUser(user), properties: props });
     return;
   }
@@ -294,12 +387,12 @@ const server = http.createServer(async (req, res) => {
   // ══ GET /auth/me ═══════════════════════════════
   if (urlPath === "/auth/me" && req.method === "GET") {
     const session = getSession(getToken(req));
-    if (!session) { json(res, 401, { ok: false }); return; }
+    if (!session) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
     const users = await loadUsers();
-    const user = users.find(u => u.id === session.userId);
-    if (!user) { json(res, 401, { ok: false }); return; }
+    const user = users.find((u) => String(u.id) === String(session.userId));
+    if (!user) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
     const propsAll = await listPropertiesByUser(user.tenantId);
-    const props = user.role === 3 ? propsAll.filter((p) => user.propertyIds.includes(p.id)) : propsAll;
+    const props = visiblePropsForUser(user, propsAll);
     json(res, 200, { ok: true, user: publicUser(user), properties: props });
     return;
   }
@@ -456,7 +549,7 @@ const server = http.createServer(async (req, res) => {
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const propsAll = await listPropertiesByUser(me.tenantId);
-    const props = me.role === 3 ? propsAll.filter((p) => me.propertyIds.includes(p.id)) : propsAll;
+    const props = visiblePropsForUser(me, propsAll);
     json(res, 200, { ok: true, properties: props });
     return;
   }
@@ -467,7 +560,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const { name, databaseId, databasePassword, tableName } = await readBody(req);
     if (!name || !databaseId || !tableName) { json(res, 400, { ok: false, message: "必須項目が不足しています" }); return; }
     const newProp = await createProperty(me.tenantId, { name, databaseId, databasePassword: databasePassword || "", tableName });
@@ -512,7 +605,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = urlPath.slice("/user/properties/".length, -"/meta".length);
     try {
       const body = await readBody(req);
@@ -529,7 +622,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = urlPath.slice("/user/properties/".length, -"/images".length);
     const prop = await getPropertyByIdForUser(id, me.tenantId);
     if (!prop) { json(res, 404, { ok: false, message: "物件が見つかりません" }); return; }
@@ -547,7 +640,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const tail = urlPath.slice("/user/properties/".length);
     const i = tail.indexOf("/images/");
     const pid = tail.slice(0, i);
@@ -569,7 +662,7 @@ const server = http.createServer(async (req, res) => {
     const { name, databaseId, databasePassword, tableName } = await readBody(req);
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const existing = await getPropertyByIdForUser(id, me.tenantId);
     if (!existing) { json(res, 404, { ok: false }); return; }
     const updated = await updateProperty(id, me.tenantId, { name, databaseId, databasePassword, tableName });
@@ -584,14 +677,15 @@ const server = http.createServer(async (req, res) => {
     const id = urlPath.replace("/user/properties/", "");
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (me.role !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     await deleteProperty(id, me.tenantId);
+    await userStore.clearLoginDefaultPropertyId(id);
     // アクティブ物件が削除されたらリセット
     const users = await loadUsers();
     const ui = users.findIndex(u => u.id === session.userId);
     if (ui >= 0 && users[ui].activePropertyId === id) {
       const remainingAll = await listPropertiesByUser(me.tenantId);
-      const remaining = me.role === 3 ? remainingAll.filter((p) => me.propertyIds.includes(p.id)) : remainingAll;
+      const remaining = visiblePropsForUser(me, remainingAll);
       users[ui].activePropertyId = remaining.length ? remaining[0].id : null;
       await userStore.updateUser(users[ui]);
     }
@@ -611,6 +705,36 @@ const server = http.createServer(async (req, res) => {
       await userStore.updateUser(users[ui]);
     }
     json(res, 200, { ok: true });
+    return;
+  }
+
+  // ══ POST /user/login-default-property（ログイン時に表示する物件） ══
+  if (urlPath === "/user/login-default-property" && req.method === "POST") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
+    const me = await currentUserFromSession(session);
+    if (!me) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
+    try {
+      const body = await readBody(req);
+      const raw = body.propertyId;
+      const pid = raw == null || raw === "" ? null : String(raw);
+      const propsAll = await listPropertiesByUser(me.tenantId);
+      const visible = visiblePropsForUser(me, propsAll);
+      if (pid && !visible.some((p) => String(p.id) === pid)) {
+        json(res, 400, { ok: false, message: "指定の物件にアクセスできません" });
+        return;
+      }
+      const users = await loadUsers();
+      const mid = String(me.id);
+      const ui = users.findIndex((u) => String(u.id) === mid);
+      if (ui < 0) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
+      users[ui].loginDefaultPropertyId = pid;
+      if (pid) users[ui].activePropertyId = pid;
+      await userStore.updateUser(users[ui]);
+      json(res, 200, { ok: true, user: publicUser(users[ui]) });
+    } catch (e) {
+      json(res, 400, { ok: false, message: e.message || String(e) });
+    }
     return;
   }
 
@@ -637,8 +761,36 @@ const server = http.createServer(async (req, res) => {
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const users = (await loadUsers()).filter((u) => u.tenantId === me.tenantId);
-    const visible = me.role === 3 ? users.filter((u) => u.id === me.id) : users;
+    const visible = isPropertyScopedRole(me.role) ? users.filter((u) => u.id === me.id) : users;
     json(res, 200, { ok: true, accounts: visible.map(publicUser) });
+    return;
+  }
+
+  if (urlPath === "/user/mail-status" && req.method === "GET") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    const me = await currentUserFromSession(session);
+    if (!me) { json(res, 401, { ok: false }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    json(res, 200, { ok: true, smtpConfigured: hasSmtpEnv(process.env) });
+    return;
+  }
+
+  if (urlPath === "/user/mail-test" && req.method === "POST") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    const me = await currentUserFromSession(session);
+    if (!me) { json(res, 401, { ok: false }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!hasSmtpEnv(process.env)) { json(res, 400, { ok: false, message: "SMTP設定が未登録です" }); return; }
+    const to = String(me.email || "").trim();
+    if (!to) { json(res, 400, { ok: false, message: "ログイン中のアカウントにメールアドレスがありません" }); return; }
+    try {
+      const out = await sendSmtpTestMail(process.env, { to });
+      json(res, 200, { ok: true, sent: out.sent, messageId: out.messageId || "" });
+    } catch (e) {
+      json(res, 500, { ok: false, message: e.message || "テストメール送信に失敗しました" });
+    }
     return;
   }
 
@@ -662,11 +814,25 @@ const server = http.createServer(async (req, res) => {
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return err("E-mail が不正です");
     const users = await loadUsers();
     if (users.some((u) => u.email.toLowerCase() === email)) return err("このE-mailは既に登録されています");
-    if (![2, 3].includes(role)) return err("権限を選択してください");
+    if (![ROLE.MASTER, ROLE.CLIENT_ADMIN, ROLE.PROPERTY_MANAGER].includes(role))
+      return err("権限を選択してください");
+    if (role === ROLE.MASTER && !isMaster(me.role)) {
+      json(res, 403, { ok: false, message: "マスター権限の付与はマスターアカウントのみが行えます" });
+      return;
+    }
     if (!client) return err("クライアントは必須です");
-    if (!password || password.length < 8) return err("パスワードは8文字以上にしてください");
-    if (password !== passwordConfirm) return err("パスワード（確認）が一致しません");
-    if (role === 3 && propertyIds.length === 0) return err("不動産担当者は担当物件を1件以上選択してください");
+    const pwdTrim = String(password || "").trim();
+    const pwd2Trim = String(passwordConfirm || "").trim();
+    let passwordHash;
+    if (!pwdTrim) {
+      passwordHash = sha256(randomTempPassword(12));
+    } else {
+      if (pwdTrim.length < 8) return err("パスワードは8文字以上にしてください");
+      if (pwdTrim !== pwd2Trim) return err("パスワード（確認）が一致しません");
+      passwordHash = sha256(pwdTrim);
+    }
+    if (isPropertyScopedRole(role) && propertyIds.length === 0)
+      return err("物件管理者は担当物件を1件以上選択してください");
 
     const newUser = normalizeUser({
       id: crypto.randomUUID(),
@@ -675,9 +841,9 @@ const server = http.createServer(async (req, res) => {
       name,
       email,
       role,
-      propertyIds: role === 2 ? [] : propertyIds,
-      password: sha256(password),
-      activePropertyId: role === 3 ? propertyIds[0] || null : null,
+      propertyIds: isPropertyScopedRole(role) ? propertyIds : [],
+      password: passwordHash,
+      activePropertyId: isPropertyScopedRole(role) ? propertyIds[0] || null : null,
     });
     users.push(newUser);
     await saveUsers(users);
@@ -697,7 +863,7 @@ const server = http.createServer(async (req, res) => {
       const propertyId = decodeURIComponent(urlPath.slice(head.length, -tail.length));
       const prop = await getPropertyByIdForUser(propertyId, me.tenantId);
       if (!prop) { json(res, 404, { ok: false, message: "物件が見つかりません" }); return; }
-      if (me.role === 3 && Array.isArray(me.propertyIds) && !me.propertyIds.includes(propertyId)) {
+      if (!role3MayAccessPropertyId(me, propertyId)) {
         json(res, 403, { ok: false, message: "権限がありません" });
         return;
       }
@@ -737,7 +903,7 @@ const server = http.createServer(async (req, res) => {
       const propertyId = decodeURIComponent(urlPath.slice(head.length, -tail.length));
       const prop = await getPropertyByIdForUser(propertyId, me.tenantId);
       if (!prop) { json(res, 404, { ok: false, message: "物件が見つかりません" }); return; }
-      if (me.role === 3 && Array.isArray(me.propertyIds) && !me.propertyIds.includes(propertyId)) {
+      if (!role3MayAccessPropertyId(me, propertyId)) {
         json(res, 403, { ok: false, message: "権限がありません" });
         return;
       }
@@ -783,8 +949,12 @@ const server = http.createServer(async (req, res) => {
     const users = await loadUsers();
     const idx = users.findIndex((u) => u.id === id && u.tenantId === me.tenantId);
     if (idx < 0) { json(res, 404, { ok: false }); return; }
-    if (me.role === 3 && id !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
-    const prevRole = Number(users[idx].role || 2);
+    if (isPropertyScopedRole(me.role) && id !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (isMaster(users[idx].role) && !isMaster(me.role)) {
+      json(res, 403, { ok: false, message: "マスターアカウントの編集はマスターのみが行えます" });
+      return;
+    }
+    const prevRole = normalizeRole(users[idx].role || 2);
 
     const next = { ...users[idx] };
     const name = String(body.name ?? next.name).trim();
@@ -798,9 +968,23 @@ const server = http.createServer(async (req, res) => {
     if (!name) { json(res, 400, { ok: false, message: "担当者名は必須です" }); return; }
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { json(res, 400, { ok: false, message: "E-mail が不正です" }); return; }
     if (users.some((u) => u.id !== id && u.email.toLowerCase() === email)) { json(res, 400, { ok: false, message: "このE-mailは既に登録されています" }); return; }
-    if (![2, 3].includes(role)) { json(res, 400, { ok: false, message: "権限を選択してください" }); return; }
+    if (![ROLE.MASTER, ROLE.CLIENT_ADMIN, ROLE.PROPERTY_MANAGER].includes(role)) {
+      json(res, 400, { ok: false, message: "権限を選択してください" });
+      return;
+    }
+    if (role === ROLE.MASTER && !isMaster(me.role)) {
+      json(res, 403, { ok: false, message: "マスター権限の付与はマスターアカウントのみが行えます" });
+      return;
+    }
+    if (!isMaster(me.role) && isMaster(users[idx].role) && role !== ROLE.MASTER) {
+      json(res, 403, { ok: false, message: "マスター権限の変更はマスターのみが行えます" });
+      return;
+    }
     if (!client) { json(res, 400, { ok: false, message: "クライアントは必須です" }); return; }
-    if (role === 3 && (!propertyIds || propertyIds.length === 0)) { json(res, 400, { ok: false, message: "不動産担当者は担当物件を1件以上選択してください" }); return; }
+    if (isPropertyScopedRole(role) && (!propertyIds || propertyIds.length === 0)) {
+      json(res, 400, { ok: false, message: "物件管理者は担当物件を1件以上選択してください" });
+      return;
+    }
     if (password) {
       if (password.length < 8) { json(res, 400, { ok: false, message: "パスワードは8文字以上にしてください" }); return; }
       if (password !== passwordConfirm) { json(res, 400, { ok: false, message: "パスワード（確認）が一致しません" }); return; }
@@ -810,10 +994,13 @@ const server = http.createServer(async (req, res) => {
     next.email = email;
     next.role = role;
     next.client = client;
-    next.propertyIds = role === 2 ? [] : propertyIds;
-    if (prevRole === 3 && role === 2) next.activePropertyId = null;
-    if (next.role === 3 && next.activePropertyId && !next.propertyIds.includes(next.activePropertyId)) {
-      next.activePropertyId = next.propertyIds[0] || null;
+    next.propertyIds = isPropertyScopedRole(role) ? propertyIds : [];
+    if (isPropertyScopedRole(prevRole) && !isPropertyScopedRole(role)) next.activePropertyId = null;
+    if (isPropertyScopedRole(next.role) && next.activePropertyId) {
+      const allowed = new Set((next.propertyIds || []).map(String));
+      if (!allowed.has(String(next.activePropertyId))) {
+        next.activePropertyId = next.propertyIds[0] || null;
+      }
     }
 
     users[idx] = normalizeUser(next);
@@ -830,6 +1017,12 @@ const server = http.createServer(async (req, res) => {
     const id = decodeURIComponent(urlPath.slice("/user/accounts/".length));
     if (id === me.id) { json(res, 400, { ok: false, message: "自分自身は削除できません" }); return; }
     const users = await loadUsers();
+    const victim = users.find((u) => u.id === id && u.tenantId === me.tenantId);
+    if (!victim) { json(res, 404, { ok: false, message: "対象が見つかりません" }); return; }
+    if (isMaster(victim.role) && !isMaster(me.role)) {
+      json(res, 403, { ok: false, message: "マスターアカウントの削除はマスターのみが行えます" });
+      return;
+    }
     await saveUsers(users.filter((u) => !(u.id === id && u.tenantId === me.tenantId)));
     json(res, 200, { ok: true });
     return;
@@ -845,12 +1038,20 @@ const server = http.createServer(async (req, res) => {
     const target = users.find((u) => u.id === id && String(u.tenantId) === String(me.tenantId));
     if (!target) { json(res, 404, { ok: false, message: "対象アカウントが見つかりません" }); return; }
     if (!target.email) { json(res, 400, { ok: false, message: "メールアドレスが未設定です" }); return; }
-    if (!hasSmtpEnv(ENV)) { json(res, 400, { ok: false, message: "SMTP設定が未登録です" }); return; }
+    if (!hasSmtpEnv(process.env)) { json(res, 400, { ok: false, message: "SMTP設定が未登録です" }); return; }
     const body = await readBody(req);
     const loginUrl = String(body.loginUrl || ENV.APP_LOGIN_URL || `${body.origin || ""}/login.html`).trim();
-    const tempPassword = String(body.tempPassword || "").trim();
+    let tempPassword = String(body.tempPassword || "").trim();
+    if (!tempPassword) {
+      tempPassword = randomTempPassword(12);
+      const idx = users.findIndex((u) => u.id === target.id);
+      if (idx >= 0) {
+        users[idx] = normalizeUser({ ...users[idx], password: sha256(tempPassword) });
+        await saveUsers(users);
+      }
+    }
     try {
-      const out = await sendAccountInviteMail(ENV, {
+      const out = await sendAccountInviteMail(process.env, {
         name: target.name || "",
         email: target.email,
         loginUrl,
@@ -913,7 +1114,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
       const body = await readBody(req);
       const created = await addMediaAssetType(me.tenantId, body || {});
@@ -928,7 +1129,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
       const typeKey = decodeURIComponent(urlPath.slice("/media-asset-types/".length));
       await deleteMediaAssetType(me.tenantId, typeKey);
@@ -943,7 +1144,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!canUsePropertyMediaRoles(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
       const body = await readBody(req);
       const prop = await getActivePropertyForUser(session.userId);
@@ -960,6 +1161,11 @@ const server = http.createServer(async (req, res) => {
       const fileSize = Number(body.fileSize || 0);
       if (!fileName || !mimeType || !fileSize) { json(res, 400, { ok: false, message: "fileName/mimeType/fileSize は必須です" }); return; }
       const key = buildAssetKey(prop.id, fileName);
+      await ensureBucketCors({
+        bucketName: cfg.bucketName,
+        region: cfg.region,
+        requestOrigin: req.headers.origin || "",
+      }, process.env);
       const signed = await createUploadPresignedUrl({
         bucketName: cfg.bucketName,
         region: cfg.region,
@@ -980,7 +1186,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!canUsePropertyMediaRoles(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
       const body = await readBody(req);
       const key = String(body.key || "").trim();
@@ -1006,12 +1212,51 @@ const server = http.createServer(async (req, res) => {
     }
     return;
   }
+  if (urlPath === "/media-assets/upload-direct" && req.method === "POST") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    const me = await currentUserFromSession(session);
+    if (!me) { json(res, 401, { ok: false }); return; }
+    if (!canUsePropertyMediaRoles(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    try {
+      const body = await readBody(req);
+      const prop = await getActivePropertyForUser(session.userId);
+      const cfg = s3ConfigFromProperty(prop, process.env);
+      if (!cfg) { json(res, 400, { ok: false, message: "S3設定が見つかりません。物件詳細をご確認ください。" }); return; }
+      const fileName = String(body.fileName || "").trim();
+      const mimeType = String(body.mimeType || "application/octet-stream").trim();
+      const fileSize = Number(body.fileSize || 0);
+      const dataBase64 = String(body.dataBase64 || "");
+      if (!fileName || !fileSize || !dataBase64) { json(res, 400, { ok: false, message: "fileName/fileSize/dataBase64 は必須です" }); return; }
+      const bin = Buffer.from(dataBase64, "base64");
+      if (!bin.length) { json(res, 400, { ok: false, message: "ファイルデータが空です" }); return; }
+      const key = buildAssetKey(prop.id, fileName);
+      await uploadObjectDirect({ bucketName: cfg.bucketName, key, mimeType, body: bin, region: cfg.region }, process.env);
+      const created = await createMediaAssetRecord(me.tenantId, me.id, {
+        id: crypto.randomUUID(),
+        name: fileName,
+        mimeType,
+        fileSize,
+        fileKey: key,
+        filePath: key,
+        thumbnailUrl: "",
+        propertyId: prop.id,
+        assetType: body.assetType || "other",
+        tags: body.tags || [],
+        memo: body.memo || "",
+      });
+      json(res, 200, { ok: true, asset: created, key });
+    } catch (e) {
+      json(res, 400, { ok: false, message: e.message || "サーバー経由アップロードに失敗しました" });
+    }
+    return;
+  }
   if (urlPath.startsWith("/media-assets/") && req.method === "PATCH") {
     const session = getSession(getToken(req));
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (![2, 4].includes(Number(me.role || 0))) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!canUsePropertyMediaRoles(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     try {
       const id = decodeURIComponent(urlPath.slice("/media-assets/".length));
       const body = await readBody(req);
@@ -1028,7 +1273,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (Number(me.role || 0) !== 2) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const id = decodeURIComponent(urlPath.slice("/media-assets/".length));
     const target = await getMediaAssetById(me.tenantId, id);
     if (!target) { json(res, 404, { ok: false, message: "素材が見つかりません" }); return; }
@@ -1105,7 +1350,7 @@ const server = http.createServer(async (req, res) => {
 
       let rows = await listSchedules(prop.id, f);
       // 担当者は「自分担当」または「pending」のみ
-      if (me.role === 3) rows = rows.filter((r) => r.status === "pending" || String(r.staffId || "") === String(me.id));
+      if (isPropertyScopedRole(me.role)) rows = rows.filter((r) => r.status === "pending" || String(r.staffId || "") === String(me.id));
       json(res, 200, { ok: true, events: rows });
     } catch (e) {
       json(res, 500, { ok: false, message: e.message || String(e) });
@@ -1140,7 +1385,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       // 担当者は確定操作時に自分を担当者としてセット
-      if (me.role === 3 && body.status === "confirmed" && !body.staffId) body.staffId = me.id;
+      if (isPropertyScopedRole(me.role) && body.status === "confirmed" && !body.staffId) body.staffId = me.id;
       await updateSchedule(prop.id, id, body);
       json(res, 200, { ok: true });
     } catch (e) {
@@ -1300,7 +1545,7 @@ const server = http.createServer(async (req, res) => {
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const targetUserId = fullUrl.searchParams.get("userId") || me.id;
-    if (me.role !== 2 && targetUserId !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role) && targetUserId !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const columns = await getCustomerListColumns(me.tenantId, targetUserId);
     const prop = await getActivePropertyForUser(session.userId);
     const availableFields = prop ? await listCustomerAvailableFields(prop.id, 500) : [];
@@ -1314,7 +1559,7 @@ const server = http.createServer(async (req, res) => {
     if (!me) { json(res, 401, { ok: false }); return; }
     const body = await readBody(req);
     const targetUserId = String(body.userId || me.id);
-    if (me.role !== 2) { json(res, 403, { ok: false, message: "管理者のみ設定できます" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "管理者のみ設定できます" }); return; }
     try {
       const saved = await saveCustomerListColumns(me.tenantId, targetUserId, body.columns || []);
       json(res, 200, { ok: true, columns: saved });
@@ -1331,7 +1576,7 @@ const server = http.createServer(async (req, res) => {
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
     const targetUserId = fullUrl.searchParams.get("userId") || me.id;
-    if (me.role !== 2 && targetUserId !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    if (!isAdminLike(me.role) && targetUserId !== me.id) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
     const fields = await getCustomerDetailFieldConfig(me.tenantId, targetUserId);
     json(res, 200, { ok: true, fields, defaults: DEFAULT_CUSTOMER_DETAIL_FIELDS });
     return;
@@ -1341,7 +1586,7 @@ const server = http.createServer(async (req, res) => {
     if (!session) { json(res, 401, { ok: false }); return; }
     const me = await currentUserFromSession(session);
     if (!me) { json(res, 401, { ok: false }); return; }
-    if (me.role !== 2) { json(res, 403, { ok: false, message: "管理者のみ設定できます" }); return; }
+    if (!isAdminLike(me.role)) { json(res, 403, { ok: false, message: "管理者のみ設定できます" }); return; }
     const body = await readBody(req);
     const targetUserId = String(body.userId || me.id);
     try {
@@ -1383,6 +1628,50 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       console.error("[export-karte-excel]", e.stack || e);
       json(res, 500, { ok: false, message: e.message || "Excel生成に失敗しました" });
+    }
+    return;
+  }
+
+  // ══ POST /local/media-asset-upload（S3へサーバー経由・アプリ内API） ══
+  if (urlPath === "/local/media-asset-upload" && req.method === "POST") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
+    const me = await currentUserFromSession(session);
+    if (!me) { json(res, 401, { ok: false }); return; }
+    if (!canUsePropertyMediaRoles(me.role)) { json(res, 403, { ok: false, message: "権限がありません" }); return; }
+    try {
+      const body = await readBody(req);
+      const prop = await getActivePropertyForUser(session.userId);
+      const cfg = s3ConfigFromProperty(prop, process.env);
+      if (!cfg) {
+        json(res, 400, { ok: false, message: "S3設定が見つかりません。物件詳細でバケットを登録し、ヘッダーで物件を選択してください。" });
+        return;
+      }
+      const fileName = String(body.fileName || "").trim();
+      const mimeType = String(body.mimeType || "application/octet-stream").trim();
+      const fileSize = Number(body.fileSize || 0);
+      const dataBase64 = String(body.dataBase64 || "");
+      if (!fileName || !fileSize || !dataBase64) { json(res, 400, { ok: false, message: "fileName/fileSize/dataBase64 は必須です" }); return; }
+      const bin = Buffer.from(dataBase64, "base64");
+      if (!bin.length) { json(res, 400, { ok: false, message: "ファイルデータが空です" }); return; }
+      const key = buildAssetKey(prop.id, fileName);
+      await uploadObjectDirect({ bucketName: cfg.bucketName, key, mimeType, body: bin, region: cfg.region }, process.env);
+      const created = await createMediaAssetRecord(me.tenantId, me.id, {
+        id: crypto.randomUUID(),
+        name: fileName,
+        mimeType,
+        fileSize,
+        fileKey: key,
+        filePath: key,
+        thumbnailUrl: "",
+        propertyId: prop.id,
+        assetType: body.assetType || "other",
+        tags: body.tags || [],
+        memo: body.memo || "",
+      });
+      json(res, 200, { ok: true, asset: created, key });
+    } catch (e) {
+      json(res, 400, { ok: false, message: e.message || "サーバー経由アップロードに失敗しました" });
     }
     return;
   }
@@ -1472,6 +1761,41 @@ const server = http.createServer(async (req, res) => {
       const customerId = decodeURIComponent(base);
       const body = await readBody(req);
       await addSalesHistory(prop.id, customerId, body || {});
+      json(res, 200, { ok: true });
+    } catch (e) {
+      json(res, 400, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+  if (urlPath.startsWith("/local/customers/") && urlPath.includes("/sales-history/") && req.method === "PUT") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const prop = await getActivePropertyForUser(session.userId);
+      if (!prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
+      const tail = urlPath.slice("/local/customers/".length);
+      const i = tail.indexOf("/sales-history/");
+      const customerId = decodeURIComponent(tail.slice(0, i));
+      const salesId = decodeURIComponent(tail.slice(i + "/sales-history/".length));
+      const body = await readBody(req);
+      await updateSalesHistory(prop.id, customerId, salesId, body || {});
+      json(res, 200, { ok: true });
+    } catch (e) {
+      json(res, 400, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+  if (urlPath.startsWith("/local/customers/") && urlPath.includes("/sales-history/") && req.method === "DELETE") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const prop = await getActivePropertyForUser(session.userId);
+      if (!prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
+      const tail = urlPath.slice("/local/customers/".length);
+      const i = tail.indexOf("/sales-history/");
+      const customerId = decodeURIComponent(tail.slice(0, i));
+      const salesId = decodeURIComponent(tail.slice(i + "/sales-history/".length));
+      await deleteSalesHistory(prop.id, customerId, salesId);
       json(res, 200, { ok: true });
     } catch (e) {
       json(res, 400, { ok: false, message: e.message || String(e) });
@@ -1580,6 +1904,5 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`\n✅ サーバー起動中: http://localhost:${PORT}`);
-  console.log(`   初期ログイン: admin@example.com / admin`);
   console.log(`   停止するには Ctrl+C\n`);
 });

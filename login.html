@@ -20,6 +20,7 @@ body { display: flex; align-items: center; justify-content: center; min-height: 
 .btn-login:disabled { opacity: 0.6; cursor: not-allowed; }
 .error-msg { color: #cc0000; font-size: 13px; margin-top: 10px; display: none; padding: 8px 12px; background: #fff3f3; border: 1px solid #ffcccc; }
 .note { font-size: 11px; color: rgb(150,160,170); text-align: center; margin-top: 20px; }
+.ok-msg { color: #1b5e20; font-size: 13px; margin-top: 10px; display: none; padding: 8px 12px; background: #f1fff2; border: 1px solid #b7e2ba; }
 </style>
 </head>
 <body>
@@ -30,18 +31,24 @@ body { display: flex; align-items: center; justify-content: center; min-height: 
   </div>
   <div class="form-group">
     <label>メールアドレス</label>
-    <input type="email" id="email" placeholder="admin@example.com" autocomplete="email">
+    <input type="email" id="email" placeholder="name@example.com" autocomplete="email">
   </div>
   <div class="form-group">
     <label>パスワード</label>
     <input type="password" id="password" placeholder="パスワード" autocomplete="current-password">
   </div>
+  <div class="form-group" id="otpBlock" style="display:none">
+    <label>認証コード（6桁）</label>
+    <input type="text" id="otpCode" placeholder="000000" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+  </div>
   <div id="errorMsg" class="error-msg"></div>
+  <div id="okMsg" class="ok-msg"></div>
   <button class="btn-login" id="btnLogin" onclick="login()">ログイン</button>
-  <div class="note">初期アカウント: admin@example.com / admin</div>
+  <div class="note">ログイン時は2段階認証コード（メール送信）が必要です。</div>
 </div>
 <script>
 const API_BASE = window.location.protocol === "file:" ? "http://localhost:3001" : "";
+let loginChallengeToken = "";
 const token = localStorage.getItem("token");
 if (token) {
   fetch(`${API_BASE}/auth/me`, { headers: { "Authorization": `Bearer ${token}` } })
@@ -50,6 +57,12 @@ if (token) {
 async function login() {
   const email = document.getElementById("email").value.trim();
   const password = document.getElementById("password").value;
+  const code = document.getElementById("otpCode").value.trim();
+  hideMsgs();
+  if (loginChallengeToken) {
+    if (!code || !/^\d{6}$/.test(code)) { showErr("認証コード（6桁）を入力してください"); return; }
+    return verify2fa(code);
+  }
   if (!email || !password) { showErr("メールアドレスとパスワードを入力してください"); return; }
   const btn = document.getElementById("btnLogin");
   btn.disabled = true; btn.textContent = "ログイン中...";
@@ -60,17 +73,80 @@ async function login() {
     });
     const data = await res.json();
     if (!data.ok) { showErr(data.message || "ログインに失敗しました"); return; }
+    if (data.token && data.user) {
+      localStorage.setItem("token", data.token);
+      localStorage.setItem("user", JSON.stringify(data.user));
+      try {
+        const ld = data.user.loginDefaultPropertyId;
+        if (ld != null && String(ld).trim() !== "") {
+          localStorage.setItem("rem_login_default_property_id", String(ld));
+        } else {
+          localStorage.removeItem("rem_login_default_property_id");
+        }
+      } catch (_) {}
+      localStorage.setItem("properties", JSON.stringify(data.properties || []));
+      const active = (data.properties || []).find(p => p.id === data.user.activePropertyId) || (data.properties || [])[0] || null;
+      localStorage.setItem("activeProperty", JSON.stringify(active));
+      window.location.href = "dashboard.html";
+      return;
+    }
+    if (data.requires2fa && data.challengeToken) {
+      loginChallengeToken = data.challengeToken;
+      document.getElementById("otpBlock").style.display = "block";
+      showOk(data.message || "認証コードをメール送信しました。");
+      btn.textContent = "認証してログイン";
+      return;
+    }
+    showErr("ログイン応答が不正です。管理者にお問い合わせください。");
+  } catch(e) {
+    showErr("接続エラー：ターミナルで「node proxy-server.js」が起動しているか確認してください");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = loginChallengeToken ? "認証してログイン" : "ログイン";
+  }
+}
+async function verify2fa(code) {
+  const btn = document.getElementById("btnLogin");
+  btn.disabled = true; btn.textContent = "認証中...";
+  try {
+    const res = await fetch(`${API_BASE}/auth/verify-2fa`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challengeToken: loginChallengeToken, code }),
+    });
+    const data = await res.json();
+    if (!data.ok) { showErr(data.message || "認証に失敗しました"); return; }
     localStorage.setItem("token", data.token);
     localStorage.setItem("user", JSON.stringify(data.user));
+    try {
+      const ld = data.user.loginDefaultPropertyId;
+      if (ld != null && String(ld).trim() !== "") {
+        localStorage.setItem("rem_login_default_property_id", String(ld));
+      } else {
+        localStorage.removeItem("rem_login_default_property_id");
+      }
+    } catch (_) {}
     localStorage.setItem("properties", JSON.stringify(data.properties));
     const active = data.properties.find(p => p.id === data.user.activePropertyId) || data.properties[0] || null;
     localStorage.setItem("activeProperty", JSON.stringify(active));
     window.location.href = "dashboard.html";
-  } catch(e) {
-    showErr("接続エラー：ターミナルで「node proxy-server.js」が起動しているか確認してください");
-  } finally { btn.disabled = false; btn.textContent = "ログイン"; }
+  } catch (e) {
+    showErr("認証に失敗しました。時間を置いて再試行してください。");
+  } finally { btn.disabled = false; btn.textContent = "認証してログイン"; }
 }
-function showErr(msg) { const el = document.getElementById("errorMsg"); el.textContent = msg; el.style.display = "block"; }
+function hideMsgs() {
+  document.getElementById("errorMsg").style.display = "none";
+  document.getElementById("okMsg").style.display = "none";
+}
+function showErr(msg) {
+  const el = document.getElementById("errorMsg");
+  el.textContent = msg;
+  el.style.display = "block";
+}
+function showOk(msg) {
+  const el = document.getElementById("okMsg");
+  el.textContent = msg;
+  el.style.display = "block";
+}
 document.addEventListener("keydown", e => { if (e.key === "Enter") login(); });
 </script>
 </body>

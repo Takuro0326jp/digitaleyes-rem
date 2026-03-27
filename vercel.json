@@ -16,6 +16,7 @@
     { "source": "/gallery/:path*", "destination": "/api/handler?__r=/gallery/:path*" },
     { "source": "/user/properties", "destination": "/api/handler?__r=/user/properties" },
     { "source": "/user/select-property", "destination": "/api/handler?__r=/user/select-property" },
+    { "source": "/user/login-default-property", "destination": "/api/handler?__r=/user/login-default-property" },
     { "source": "/user/change-password", "destination": "/api/handler?__r=/user/change-password" },
     { "source": "/user/:path*", "destination": "/api/handler?__r=/user/:path*" },
     { "source": "/media-assets", "destination": "/api/handler?__r=/media-assets" },

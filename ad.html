@@ -39,14 +39,79 @@
 <script>
 const MEDIAS = ["公式HP","SUUMO","Yahoo!不動産","HOMES","アットホーム","AirRESERVE"];
 
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} がタイムアウトしました`)), ms)),
+  ]);
+}
+function parseCountLike(v) {
+  if (v == null) return 0;
+  const s = String(v);
+  if (s.includes("/")) return Number(s.split("/").pop()) || 0;
+  return Number(s) || 0;
+}
+/** ポータル反響: ローカル同期キャッシュから集計（外部APIは使わない） */
+async function fetchAllCustomersForPortal() {
+  const chunk = 200;
+  let page = 1;
+  let rows = [];
+  let total = 0;
+  while (true) {
+    const qs = new URLSearchParams({ page: String(page), limit: String(chunk) });
+    const res = await withTimeout(
+      fetch(`${CONFIG.API_BASE}/local/customers?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${Auth.getToken()}` },
+      }),
+      25000,
+      `顧客データ取得(page:${page})`
+    );
+    const text = await res.text();
+    let d = {};
+    try { d = text ? JSON.parse(text) : {}; } catch (_) {
+      throw new Error(`サーバー応答がJSONではありません（HTTP ${res.status}）`);
+    }
+    if (!res.ok || !d.ok) {
+      throw new Error(d.message || `顧客データの取得に失敗しました（HTTP ${res.status}）`);
+    }
+    const data = d.data || {};
+    const part = data.result || [];
+    total = parseCountLike(data.total_count || data.count || 0);
+    rows = rows.concat(part);
+    if (!part.length) break;
+    if (total > 0 && rows.length >= total) break;
+    page += 1;
+    if (page > 500) break;
+  }
+  return rows;
+}
+
 async function load() {
   try {
-    const data = await apiCall({
-      limit: 1000,
-      fields: JSON.stringify(["c.id","c.status","c.baitai","c.date_entry","c.q1"])
-    });
-    const all = data.result || [];
+    if (!Auth.getActiveProperty()) {
+      document.getElementById("content").innerHTML = `
+        <section class="section" style="padding-top:24px;max-width:560px">
+          <div class="error-box" style="border-color:#b2dfdb;background:#f0fff4;color:rgb(70,83,98)">
+            <p style="margin:0 0 12px">物件が選択されていません。ヘッダーで物件を選ぶか、物件を登録してください。</p>
+            <a href="property.html" class="btn btn-primary-solid" style="display:inline-block;text-decoration:none;margin-right:8px">物件管理</a>
+            <a href="customer.html" class="btn" style="display:inline-block;text-decoration:none">顧客一覧（同期）</a>
+          </div>
+        </section>`;
+      return;
+    }
+    const all = await fetchAllCustomersForPortal();
     const total = all.length;
+    if (!total) {
+      document.getElementById("content").innerHTML = `
+        <section class="section" style="padding-top:24px;max-width:640px">
+          <div class="error-box" style="border-color:#ffcc80;background:#fff8e1;color:rgb(70,83,98)">
+            <p style="margin:0 0 8px;font-weight:600">表示する反響データがありません</p>
+            <p style="margin:0;line-height:1.55;font-size:13px">顧客一覧で<strong>差分同期</strong>または<strong>全件同期</strong>を実行してから再度お試しください。</p>
+            <p style="margin:12px 0 0"><a href="customer.html" class="btn btn-primary-solid" style="display:inline-block;text-decoration:none">顧客一覧へ</a></p>
+          </div>
+        </section>`;
+      return;
+    }
 
     // 媒体別集計
     const mediaCounts = {};

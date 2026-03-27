@@ -25,6 +25,13 @@
 .drawer-grid label { display:block; font-size:12px; margin-bottom:4px; font-weight:600; color:rgb(70,83,98); }
 .drawer-grid input, .drawer-grid textarea, .drawer-grid select { width:100%; padding:8px 10px; border:1px solid #ced4da; font-family:inherit; }
 .drawer-grid .dirty { border-color: rgb(53,124,176); background: rgb(246,251,255); }
+#modal.dm-ng .modal-header { background: #b71c1c; }
+#modal.dm-ng .modal-body { background: #fff5f5; }
+#modal.dm-ng #modalDmNgAlert { display: block !important; }
+#modal.dm-ng #modalEditForm input,
+#modal.dm-ng #modalEditForm textarea,
+#modal.dm-ng #modalEditForm select { border-color: #ef9a9a; }
+#modal.dm-ng .btn.btn-primary-solid { background: #c62828; border-color: #c62828; }
 </style>
 </head>
 <body>
@@ -54,6 +61,7 @@
         <button class="btn" id="btnSelAll" onclick="toggleAllByScope()">全て選択</button>
       </div>
       <button class="btn btn-sm" id="btnColConfig" onclick="openColConfig()" style="display:none">表示項目設定</button>
+      <button class="btn btn-sm" id="btnDetailConfigTop" onclick="openDetailConfig()" style="display:none">詳細項目並び替え</button>
     </div>
 
     <!-- 検索フィルター -->
@@ -95,9 +103,12 @@
     </div>
 
     <div id="qrNewRegistrationPanel" style="display:none;margin-bottom:16px;padding:14px 16px;border:1px solid rgb(224,224,224);border-radius:6px;background:rgb(250,251,252)">
-      <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:700;color:rgb(70,83,98)">新規登録用QRコード</div>
+        <button class="btn btn-sm" id="btnNewRegQrToggle" type="button" onclick="toggleNewRegQr()">開く</button>
+      </div>
+      <div id="qrNewRegBody" style="display:none;display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
         <div>
-          <div style="font-size:12px;font-weight:600;color:rgb(70,83,98);margin-bottom:8px">新規登録用QRコード</div>
           <div id="qrNewRegHost" style="min-height:140px;min-width:140px;display:inline-flex;align-items:center;justify-content:center"></div>
         </div>
         <div style="flex:1;min-width:200px">
@@ -124,13 +135,13 @@
         <label style="font-size:12px;font-weight:600">対象アカウント</label>
         <select id="colConfigUser" style="margin-left:8px;padding:6px 8px;border:1px solid #ced4da" onchange="changeColConfigUser(this.value)"></select>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div>
-          <div style="font-weight:700;margin-bottom:6px">表示候補（チェックで表示）</div>
+      <div id="colConfigGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div id="colConfigLeftPane">
+          <div id="colConfigLeftTitle" style="font-weight:700;margin-bottom:6px">表示候補（チェックで表示）</div>
           <div id="colCandidateList" style="max-height:320px;overflow:auto;border:1px solid rgb(224,224,224);padding:8px"></div>
         </div>
-        <div>
-          <div style="font-weight:700;margin-bottom:6px">表示順（ドラッグ）/ 幅(px)</div>
+        <div id="colConfigRightPane">
+          <div id="colConfigRightTitle" style="font-weight:700;margin-bottom:6px">表示順（ドラッグ）/ 幅(px)</div>
           <ul id="colSelectedList" style="list-style:none;max-height:320px;overflow:auto;border:1px solid rgb(224,224,224);padding:8px"></ul>
         </div>
       </div>
@@ -153,9 +164,12 @@
     <div class="modal-body">
       <div id="modalSurveyQrEmptyNote" style="display:none;margin-bottom:12px;padding:10px 12px;font-size:12px;line-height:1.55;color:rgb(90,98,108);background:rgb(248,249,250);border-radius:6px;border:1px solid rgb(230,232,235)"></div>
       <div id="modalSurveyQrRow" style="display:none;margin-bottom:16px;padding:14px 16px;border:1px solid rgb(224,224,224);border-radius:6px;background:rgb(250,251,252)">
-        <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px">
+          <div style="font-size:12px;font-weight:700;color:rgb(70,83,98)">ご来場アンケートQRコード</div>
+          <button class="btn btn-sm" id="btnModalSurveyQrToggle" type="button" onclick="toggleModalSurveyQr()">開く</button>
+        </div>
+        <div id="modalSurveyQrBody" style="display:none;display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
           <div>
-            <div style="font-size:12px;font-weight:600;color:rgb(70,83,98);margin-bottom:8px">ご来場アンケートQRコード</div>
             <div id="qrSurveyHost" style="min-height:140px;min-width:140px;display:inline-flex;align-items:center;justify-content:center"></div>
           </div>
           <div style="flex:1;min-width:200px">
@@ -164,8 +178,16 @@
           </div>
         </div>
       </div>
+      <div id="modalDmNgAlert" style="display:none;margin-bottom:12px;padding:12px 14px;border:1px solid #ef9a9a;border-radius:6px;background:#ffebee;color:#b71c1c;font-weight:700">
+        この顧客は DM禁止（連絡不可） です。誤送信に注意してください。
+      </div>
+      <div style="margin-bottom:12px;padding:10px 12px;border:1px solid #e0e0e0;border-radius:6px;background:#fafafa">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:rgb(70,83,98)">
+          <input id="dmNgToggle" type="checkbox" onchange="onDmNgToggleChange()">
+          DM禁止（連絡不可）
+        </label>
+      </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:10px">
-        <button class="btn btn-sm" id="btnDetailConfig" style="display:none" onclick="openDetailConfig()">詳細項目並び替え</button>
         <button class="btn btn-sm" onclick="exportCustomerExcel()">Excel出力</button>
         <button class="btn btn-sm" onclick="exportCustomerPdf()">PDF出力</button>
       </div>
@@ -193,7 +215,10 @@
           <div style="grid-column:1/-1"><label style="font-size:12px">対応内容</label><textarea id="shDetail" rows="2" style="width:100%;padding:8px 10px;border:1px solid #ced4da"></textarea></div>
           <div style="grid-column:1/-1"><label style="font-size:12px">メモ</label><textarea id="shMemo" rows="2" style="width:100%;padding:8px 10px;border:1px solid #ced4da"></textarea></div>
         </div>
-        <div style="margin-top:10px"><button class="btn btn-primary-solid btn-sm" onclick="saveSalesHistory()">営業履歴を登録</button></div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+          <button class="btn btn-primary-solid btn-sm" onclick="saveSalesHistory()">営業履歴を登録</button>
+          <button class="btn btn-sm" type="button" onclick="cancelEditSalesHistory()">入力クリア</button>
+        </div>
         <div id="salesHistoryList" style="margin-top:10px"></div>
       </div>
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid rgb(224,224,224)">
@@ -207,6 +232,19 @@
         <label style="display:block;font-size:12px;font-weight:600;color:rgb(70,83,98);margin-bottom:6px">反響一覧（同一メール統合）</label>
         <div id="reactionList"></div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="qrPreviewModal" style="display:none" onclick="closeQrPreview()">
+  <div class="modal-box" style="max-width:320px" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3>QRコード</h3>
+      <button class="modal-close" onclick="closeQrPreview()">✕</button>
+    </div>
+    <div class="modal-body" style="text-align:center">
+      <div id="qrPreviewHost" style="min-height:220px;display:flex;align-items:center;justify-content:center"></div>
+      <a id="qrPreviewLink" href="#" target="_blank" rel="noopener noreferrer" style="font-size:12px;word-break:break-all"></a>
     </div>
   </div>
 </div>
@@ -226,6 +264,9 @@ let VISIT_STATUSES = [];
 let modalCustomerIdx = null;
 let modalCustomerDirty = false;
 let activePropertyQrMeta = { visitSurveyUrl: "", newRegistrationUrl: "" };
+let modalSurveyQrCollapsed = true;
+let listNewRegQrCollapsed = true;
+let editingSalesHistoryId = "";
 
 /** 入力値を http(s) URL として解釈できる形にそろえる（スキーム省略時は https を付与） */
 function normalizeHttpUrl(raw) {
@@ -264,19 +305,79 @@ function fillQrHost(hostId, rawUrl) {
   return true;
 }
 
+function buildSurveyQrUrl(c) {
+  const raw = String(activePropertyQrMeta.visitSurveyUrl || "").trim();
+  const href = parseHttpUrl(raw);
+  if (!href) return "";
+  return href;
+}
+
+function openQrPreviewFromUrl(rawUrl) {
+  const href = parseHttpUrl(rawUrl);
+  if (!href) return;
+  const host = document.getElementById("qrPreviewHost");
+  if (host) {
+    host.innerHTML = "";
+    if (typeof QRCode !== "undefined") {
+      const L = QRCode.CorrectLevel || {};
+      const level = L.H != null ? L.H : L.M != null ? L.M : 0;
+      new QRCode(host, { text: href, width: 220, height: 220, correctLevel: level });
+    }
+  }
+  const a = document.getElementById("qrPreviewLink");
+  if (a) {
+    a.href = href;
+    a.textContent = href.length > 60 ? href.slice(0, 60) + "…" : href;
+  }
+  document.getElementById("qrPreviewModal").style.display = "flex";
+}
+
+function closeQrPreview() {
+  const modal = document.getElementById("qrPreviewModal");
+  if (modal) modal.style.display = "none";
+}
+
+function renderMiniQrHtml(c) {
+  const href = buildSurveyQrUrl(c);
+  if (!href) return "—";
+  return `<button type="button" class="btn btn-sm" style="padding:2px;border:1px solid #ced4da;background:#fff" data-qr-url="${esc(href)}" onclick="event.stopPropagation();openQrPreviewFromUrl(this.dataset.qrUrl)">
+    <span class="mini-qr-host" data-qr-url="${esc(href)}" style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px"></span>
+  </button>`;
+}
+
+function hydrateMiniQrs() {
+  const hosts = document.querySelectorAll(".mini-qr-host[data-qr-url]");
+  hosts.forEach((host) => {
+    if (host.dataset.ready === "1") return;
+    const href = parseHttpUrl(host.dataset.qrUrl || "");
+    host.innerHTML = "";
+    if (!href || typeof QRCode === "undefined") return;
+    const L = QRCode.CorrectLevel || {};
+    const level = L.H != null ? L.H : L.M != null ? L.M : 0;
+    new QRCode(host, { text: href, width: 28, height: 28, correctLevel: level });
+    host.dataset.ready = "1";
+  });
+}
+
 function updateListPageNewRegQr() {
   const p = document.getElementById("qrNewRegistrationPanel");
+  const body = document.getElementById("qrNewRegBody");
+  const btn = document.getElementById("btnNewRegQrToggle");
   const raw = String(activePropertyQrMeta.newRegistrationUrl || "").trim();
   const href = parseHttpUrl(raw);
   if (!p) return;
   if (!href) {
     p.style.display = "none";
+    if (body) body.style.display = "none";
+    if (btn) btn.textContent = "開く";
     const h = document.getElementById("qrNewRegHost");
     if (h) h.innerHTML = "";
     return;
   }
   p.style.display = "block";
-  fillQrHost("qrNewRegHost", raw);
+  if (body) body.style.display = listNewRegQrCollapsed ? "none" : "flex";
+  if (btn) btn.textContent = listNewRegQrCollapsed ? "開く" : "閉じる";
+  if (!listNewRegQrCollapsed) fillQrHost("qrNewRegHost", raw);
   const a = document.getElementById("qrNewRegLink");
   if (a) {
     a.href = href;
@@ -284,14 +385,23 @@ function updateListPageNewRegQr() {
   }
 }
 
+function toggleNewRegQr() {
+  listNewRegQrCollapsed = !listNewRegQrCollapsed;
+  updateListPageNewRegQr();
+}
+
 function updateModalSurveyQr() {
   const row = document.getElementById("modalSurveyQrRow");
+  const body = document.getElementById("modalSurveyQrBody");
+  const btn = document.getElementById("btnModalSurveyQrToggle");
   const emptyNote = document.getElementById("modalSurveyQrEmptyNote");
   const raw = String(activePropertyQrMeta.visitSurveyUrl || "").trim();
   const href = parseHttpUrl(raw);
   if (!row) return;
   if (!href) {
     row.style.display = "none";
+    if (body) body.style.display = "none";
+    if (btn) btn.textContent = "開く";
     const h = document.getElementById("qrSurveyHost");
     if (h) h.innerHTML = "";
     if (emptyNote) {
@@ -304,12 +414,19 @@ function updateModalSurveyQr() {
   }
   if (emptyNote) emptyNote.style.display = "none";
   row.style.display = "block";
-  fillQrHost("qrSurveyHost", raw);
+  if (body) body.style.display = modalSurveyQrCollapsed ? "none" : "flex";
+  if (btn) btn.textContent = modalSurveyQrCollapsed ? "開く" : "閉じる";
+  if (!modalSurveyQrCollapsed) fillQrHost("qrSurveyHost", raw);
   const a = document.getElementById("qrSurveyLink");
   if (a) {
     a.href = href;
     a.textContent = href.length > 56 ? href.slice(0, 56) + "…" : href;
   }
+}
+
+function toggleModalSurveyQr() {
+  modalSurveyQrCollapsed = !modalSurveyQrCollapsed;
+  updateModalSurveyQr();
 }
 
 async function refreshActivePropertyQrMeta() {
@@ -399,11 +516,15 @@ const LIST_COLS = [
   { key: "c.jikosikin", label: "自己資金" },
   { key: "c.questionnaire23", label: "希望間取り" },
   { key: "c.questionnaire24", label: "希望面積" },
+  { key: "c.qr", label: "QR" },
 ];
 const LIST_COL_MAP = Object.fromEntries(LIST_COLS.map((x) => [x.key, x]));
 const BASE_FIELD_DEFS = LIST_COLS.map((x) => ({ key: x.key, defaultLabel: x.label }));
 
-function isAdminRole() { return Number(Auth.getUser()?.role || 0) === 2; }
+function isAdminRole() {
+  const r = Number(Auth.getUser()?.role || 0);
+  return r === 1 || r === 2;
+}
 let availableFieldDefs = [...BASE_FIELD_DEFS];
 function fieldDefByKey(key) {
   return availableFieldDefs.find((x) => x.key === key) || LIST_COL_MAP[key] || { key, defaultLabel: key };
@@ -426,6 +547,7 @@ function getAllCustomerFieldDefs(rows = []) {
   return [...map.values()].sort((a, b) => a.key.localeCompare(b.key, "ja"));
 }
 function listCellHtml(c, key) {
+  if (key === "c.qr") return renderMiniQrHtml(c);
   if (key === "c.status") return statusBadge(c[key]);
   if (key === "c.baitai") return baitaiBadge(c[key]);
   if (key === "c.name") return `${esc(c["c.name"] || "")}<br><span style="font-size:11px;color:rgb(150,160,170)">${esc(c["c.kana"] || "")}</span>`;
@@ -441,9 +563,16 @@ async function loadColumnsConfig(targetUserId = "") {
   });
   const d = await res.json();
   if (!res.ok || !d.ok) throw new Error(d.message || "列設定取得に失敗しました");
-  availableFieldDefs = Array.isArray(d.availableFields) && d.availableFields.length
-    ? d.availableFields.map((x) => ({ key: String(x.key || ""), defaultLabel: String(x.defaultLabel || x.key || "") })).filter((x) => x.key)
-    : [...BASE_FIELD_DEFS];
+  if (Array.isArray(d.availableFields) && d.availableFields.length) {
+    const merged = new Map(BASE_FIELD_DEFS.map((x) => [String(x.key), { key: String(x.key), defaultLabel: String(x.defaultLabel || x.key) }]));
+    d.availableFields
+      .map((x) => ({ key: String(x.key || ""), defaultLabel: String(x.defaultLabel || x.key || "") }))
+      .filter((x) => x.key)
+      .forEach((x) => merged.set(x.key, x));
+    availableFieldDefs = [...merged.values()];
+  } else {
+    availableFieldDefs = [...BASE_FIELD_DEFS];
+  }
   const normalizeCol = (x) => ({
     key: String(x.key || ""),
     width: Number(x.width || 120),
@@ -457,12 +586,34 @@ async function loadColumnsConfig(targetUserId = "") {
 async function openColConfig() {
   if (!isAdminRole()) return;
   configMode = "list";
+  switchColConfigLayout("list");
   document.querySelector("#colConfigModal .modal-header h3").textContent = "顧客一覧の表示項目設定";
   colDraft = activeColumns.map((x) => ({ ...x }));
   document.getElementById("colConfigAdminRow").style.display = "block";
   document.getElementById("colConfigUser").innerHTML = accountMaster.map((a) => `<option value="${a.id}" ${String(a.id)===String(colTargetUserId)?"selected":""}>${esc(a.name || a.email || a.id)}</option>`).join("");
   renderColConfigUi();
   document.getElementById("colConfigModal").style.display = "flex";
+}
+
+function switchColConfigLayout(mode) {
+  const grid = document.getElementById("colConfigGrid");
+  const leftTitle = document.getElementById("colConfigLeftTitle");
+  const rightPane = document.getElementById("colConfigRightPane");
+  const cand = document.getElementById("colCandidateList");
+  const selected = document.getElementById("colSelectedList");
+  if (!grid || !leftTitle || !rightPane || !cand || !selected) return;
+  if (mode === "detail") {
+    grid.style.gridTemplateColumns = "1fr";
+    leftTitle.textContent = "項目（ドラッグで並び替え / 表示・印刷・一行）";
+    rightPane.style.display = "none";
+    cand.style.maxHeight = "420px";
+  } else {
+    grid.style.gridTemplateColumns = "1fr 1fr";
+    leftTitle.textContent = "表示候補（チェックで表示）";
+    rightPane.style.display = "block";
+    cand.style.maxHeight = "320px";
+    selected.style.maxHeight = "320px";
+  }
 }
 function closeColConfig() { document.getElementById("colConfigModal").style.display = "none"; }
 async function changeColConfigUser(uid) {
@@ -566,21 +717,6 @@ async function saveColConfig() {
   const d = await res.json();
   if (!res.ok || !d.ok) { alert(d.message || "保存に失敗しました"); return; }
   activeColumns = d.columns || colDraft;
-  // #region agent log
-  fetch("http://127.0.0.1:7810/ingest/12bccbbc-9be9-48dc-b070-80fe886b58b9", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "202a69" },
-    body: JSON.stringify({
-      sessionId: "202a69",
-      runId: "list-detail-sync",
-      hypothesisId: "H1",
-      location: "customer.html:saveColConfig",
-      message: "columns saved; starting detail-fields merge",
-      data: { colTargetUserId: String(colTargetUserId || ""), listKeyCount: colDraft.length },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
   try {
     const existingDetail = await fetchDetailFieldConfigForUser(colTargetUserId);
     const mergedDetail = mergeListColumnsIntoDetailFields(existingDetail, colDraft);
@@ -590,47 +726,12 @@ async function saveColConfig() {
       body: JSON.stringify({ userId: colTargetUserId, fields: mergedDetail }),
     });
     const d2 = await res2.json();
-    // #region agent log
-    fetch("http://127.0.0.1:7810/ingest/12bccbbc-9be9-48dc-b070-80fe886b58b9", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "202a69" },
-      body: JSON.stringify({
-        sessionId: "202a69",
-        runId: "list-detail-sync",
-        hypothesisId: "H2",
-        location: "customer.html:saveColConfig",
-        message: "detail-fields PUT after list merge",
-        data: {
-          ok: !!(res2.ok && d2.ok),
-          existingDetailCount: existingDetail.length,
-          mergedDetailCount: mergedDetail.length,
-          selfUser: String(Auth.getUser()?.id || "") === String(colTargetUserId || ""),
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (!res2.ok || !d2.ok) {
       alert(d2.message || "一覧は保存できましたが、詳細項目への反映に失敗しました。詳細の表示項目設定を確認してください。");
     } else if (String(Auth.getUser()?.id) === String(colTargetUserId)) {
       detailFieldConfig = d2.fields || mergedDetail;
     }
   } catch (e) {
-    // #region agent log
-    fetch("http://127.0.0.1:7810/ingest/12bccbbc-9be9-48dc-b070-80fe886b58b9", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "202a69" },
-      body: JSON.stringify({
-        sessionId: "202a69",
-        runId: "list-detail-sync",
-        hypothesisId: "H3",
-        location: "customer.html:saveColConfig",
-        message: "detail-fields merge threw",
-        data: { err: String(e && e.message ? e.message : e) },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     alert(`一覧は保存できましたが、詳細項目への反映でエラーが発生しました: ${e.message || e}`);
   }
   closeColConfig();
@@ -770,7 +871,7 @@ function renderEditFields(c) {
   getAllCustomerFieldDefs([c]).forEach((f) => {
     if (!fieldMap.has(f.key)) fieldMap.set(f.key, { key: f.key, label: fieldLabelOf(f.key) });
   });
-  const allFields = [...fieldMap.values()];
+  const allFields = [...fieldMap.values()].filter((f) => String(f.key) !== "c.dm_ng");
   const cfgMap = new Map((detailFieldConfig || []).map((x) => [String(x.key), x]));
   const mergedCfg = allFields.map((f) => {
     const cfg = cfgMap.get(String(f.key));
@@ -801,6 +902,118 @@ function renderEditFields(c) {
   }
 }
 
+function dmNgChecked(c) {
+  const raw = String((c && c["c.dm_ng"]) ?? "").trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on" || raw === "禁止";
+}
+
+function applyDmNgVisualState(on) {
+  const modal = document.getElementById("modal");
+  if (!modal) return;
+  if (on) modal.classList.add("dm-ng");
+  else modal.classList.remove("dm-ng");
+}
+
+function onDmNgToggleChange() {
+  const on = !!document.getElementById("dmNgToggle")?.checked;
+  applyDmNgVisualState(on);
+  setModalCustomerDirty(true);
+}
+
+async function syncDmNgToDigitalEyes(customerId, dmNgOn) {
+  const cid = String(customerId || "").trim();
+  if (!/^\d+$/.test(cid)) {
+    throw new Error("DM禁止フラグの外部連携対象IDが数値ではありません（統合表示行の可能性があります）");
+  }
+  const vNum = dmNgOn ? 1 : 0;
+  const vStr = dmNgOn ? "1" : "0";
+  const expected = vStr;
+  async function readBackDmFlag() {
+    const body = new URLSearchParams();
+    body.append("limit", "1");
+    body.append("page", "1");
+    body.append("conditions", JSON.stringify([{ "c.id": cid }]));
+    const res = await fetch(`${CONFIG.API_BASE}/api/v1/database/acquisition.json`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Auth.getToken()}`,
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+      },
+      body: body.toString(),
+    });
+    const text = await res.text();
+    let d = {};
+    try { d = text ? JSON.parse(text) : {}; } catch (_) {}
+    const row = d?.data?.result?.[0] || d?.result?.[0] || null;
+    if (!row || typeof row !== "object") return "";
+    const raw = row["c.client_mail_stop_flag"] ?? row["client_mail_stop_flag"] ?? row["c.dm_ng"] ?? "";
+    return String(raw == null ? "" : raw).trim();
+  }
+  // 値型・edit_type差・項目名差異をフォールバック吸収しつつ反映確認まで行う
+  const tryPayloads = [
+    { editType: "1", conditions: [{ "c.client_mail_stop_flag": vNum }] },
+    { editType: "1", conditions: [{ "c.client_mail_stop_flag": vStr }] },
+    { editType: "2", conditions: [{ "c.client_mail_stop_flag": vNum }] },
+    { editType: "2", conditions: [{ "c.client_mail_stop_flag": vStr }] },
+    { editType: "1", conditions: [{ "client_mail_stop_flag": vNum }] },
+    { editType: "1", conditions: [{ "client_mail_stop_flag": vStr }] },
+  ];
+  let lastErr = "";
+  for (const p of tryPayloads) {
+    // 外部APIが遅延することがあるため、同一payloadを指数バックオフで再試行
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const ctrl = new AbortController();
+      const tm = setTimeout(() => ctrl.abort(), 30000);
+      const body = new URLSearchParams();
+      body.append("edit_type", p.editType);
+      body.append("edit_id", cid);
+      body.append("X_customer_id", cid);
+      body.append("conditions", JSON.stringify(p.conditions));
+      try {
+        const res = await fetch(`${CONFIG.API_BASE}/api/v1/database/update_condition.json`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${Auth.getToken()}`,
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          },
+          body: body.toString(),
+          signal: ctrl.signal,
+        });
+        const text = await res.text();
+        let d = {};
+        try { d = text ? JSON.parse(text) : {}; } catch (_) {}
+        if (res.ok && d.status !== false) {
+          let reflected = false;
+          for (let k = 0; k < 3; k++) {
+            await new Promise((r) => setTimeout(r, 350 + 200 * k));
+            const now = await readBackDmFlag();
+            if (now === expected) { reflected = true; break; }
+          }
+          if (reflected) {
+            clearTimeout(tm);
+            return;
+          }
+          lastErr = `更新応答は成功だが反映未確認 edit_id=${cid}, attempt=${attempt}, edit_type=${p.editType}, conditions=${JSON.stringify(p.conditions)}`;
+          continue;
+        }
+        if (d && d.status === false && !String(d.message || "").trim()) {
+          lastErr = `status:false（理由未返却） edit_id=${cid}, attempt=${attempt}, edit_type=${p.editType}, conditions=${JSON.stringify(p.conditions)}`;
+        } else {
+          lastErr = (d.message || text || `HTTP ${res.status}`) + ` (attempt=${attempt}, edit_type=${p.editType}, conditions=${JSON.stringify(p.conditions)})`;
+        }
+      } catch (e) {
+        if (e && e.name === "AbortError") lastErr = `タイムアウト（30秒） edit_id=${cid}, attempt=${attempt}`;
+        else lastErr = `${String(e && e.message ? e.message : e)} (attempt=${attempt})`;
+      } finally {
+        clearTimeout(tm);
+      }
+      const waitMs = Math.min(4000, 400 * Math.pow(2, attempt - 1));
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+  }
+  throw new Error(`DM禁止フラグの外部連携に失敗しました: ${lastErr}`);
+}
+
 async function loadDetailFieldConfig() {
   const me = Auth.getUser();
   const qs = new URLSearchParams({ userId: String(me?.id || "") });
@@ -815,6 +1028,7 @@ async function loadDetailFieldConfig() {
 function openDetailConfig() {
   if (!isAdminRole()) return;
   configMode = "detail";
+  switchColConfigLayout("detail");
   document.querySelector("#colConfigModal .modal-header h3").textContent = "顧客詳細の項目並び替え";
   detailDraft = (detailFieldConfig.length ? detailFieldConfig : []).map((x)=>({ ...x }));
   if (!detailDraft.length) {
@@ -940,16 +1154,110 @@ function exportCustomerPdf() {
   const now = new Date();
   const ts = `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ unit:"pt", format:"a4" });
-  let y = 40;
-  doc.setFontSize(16);
-  doc.text("顧客カルテ", 40, y); y += 24;
-  doc.setFontSize(10);
-  exportFields.forEach(({ label, value }) => {
-    const lines = doc.splitTextToSize(`${label}: ${value}`, 520);
-    doc.text(lines, 40, y);
-    y += lines.length * 14 + 4;
-    if (y > 760) { doc.addPage(); y = 40; }
+  const doc = new jsPDF({ unit: "pt", format: "a4" });
+  // jsPDF の標準フォントは日本語が文字化けするため、Canvasに描画した画像をPDFへ貼り付ける
+  // （ブラウザ描画フォントを利用するので日本語が崩れない）
+  const W = 1240; // 150dpi相当のA4横幅
+  const H = 1754; // 150dpi相当のA4縦幅
+  const M = 64;
+  const TITLE_H = 92;
+  const ROW_GAP = 10;
+  const LABEL_FONT = "600 24px sans-serif";
+  const VALUE_FONT = "20px sans-serif";
+  const META_FONT = "18px sans-serif";
+  const LABEL_W = 320;
+  const VALUE_W = W - M * 2 - LABEL_W - 20;
+  const LINE_H = 30;
+
+  const pages = [];
+  let canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  let ctx = canvas.getContext("2d");
+  function paintPageBase(pageNo) {
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "#1f2d3d";
+    ctx.font = "700 36px sans-serif";
+    ctx.fillText("顧客カルテ", M, M + 36);
+    ctx.fillStyle = "#607080";
+    ctx.font = META_FONT;
+    ctx.fillText(`出力日時: ${now.getFullYear()}/${pad2(now.getMonth() + 1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`, M, M + 66);
+    ctx.textAlign = "right";
+    ctx.fillText(`Page ${pageNo}`, W - M, M + 66);
+    ctx.textAlign = "left";
+    ctx.strokeStyle = "#d9e1e8";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(M, M + TITLE_H);
+    ctx.lineTo(W - M, M + TITLE_H);
+    ctx.stroke();
+  }
+  function wrapText(text, maxWidth, font) {
+    ctx.font = font;
+    const raw = String(text || "");
+    const out = [];
+    raw.split(/\r?\n/).forEach((line) => {
+      if (!line) {
+        out.push("");
+        return;
+      }
+      let curr = "";
+      for (const ch of line) {
+        const next = curr + ch;
+        if (ctx.measureText(next).width > maxWidth && curr) {
+          out.push(curr);
+          curr = ch;
+        } else {
+          curr = next;
+        }
+      }
+      out.push(curr);
+    });
+    return out.length ? out : [""];
+  }
+  let pageNo = 1;
+  paintPageBase(pageNo);
+  let y = M + TITLE_H + 26;
+  exportFields.forEach(({ label, value }, idx) => {
+    const labelText = String(label || "");
+    const valueLines = wrapText(String(value || "—"), VALUE_W, VALUE_FONT);
+    const rowH = Math.max(LINE_H, valueLines.length * LINE_H) + 16;
+    if (y + rowH > H - M) {
+      pages.push(canvas);
+      canvas = document.createElement("canvas");
+      canvas.width = W;
+      canvas.height = H;
+      ctx = canvas.getContext("2d");
+      pageNo += 1;
+      paintPageBase(pageNo);
+      y = M + TITLE_H + 26;
+    }
+    // label
+    ctx.fillStyle = "#334455";
+    ctx.font = LABEL_FONT;
+    ctx.fillText(labelText, M, y + 24);
+    // value
+    ctx.fillStyle = "#1f2d3d";
+    ctx.font = VALUE_FONT;
+    valueLines.forEach((ln, i) => {
+      ctx.fillText(ln, M + LABEL_W + 20, y + 24 + i * LINE_H);
+    });
+    // separator
+    ctx.strokeStyle = "#edf1f5";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(M, y + rowH);
+    ctx.lineTo(W - M, y + rowH);
+    ctx.stroke();
+    y += rowH + ROW_GAP;
+    if (idx === exportFields.length - 1) return;
+  });
+  pages.push(canvas);
+  pages.forEach((pg, i) => {
+    if (i > 0) doc.addPage();
+    const img = pg.toDataURL("image/jpeg", 0.92);
+    doc.addImage(img, "JPEG", 0, 0, 595.28, 841.89);
   });
   const id = c["c.id"] || "detail";
   doc.save(`customer_export_${id}_${ts}.pdf`);
@@ -1025,6 +1333,7 @@ async function saveModalStatus() {
 async function saveModalCustomer() {
   if (modalCustomerIdx == null) return;
   const c = customers[modalCustomerIdx];
+  const prevDmNg = dmNgChecked(c);
   const id = c["c.id"];
   const patch = {};
   const fieldMap = new Map(CUSTOMER_FIELDS.map((f) => [f.key, f]));
@@ -1032,12 +1341,13 @@ async function saveModalCustomer() {
     if (!fieldMap.has(f.key)) fieldMap.set(f.key, { key: f.key });
   });
   [...fieldMap.values()].forEach((f) => {
-    if (f.ro || f.key === "c.id") return;
+    if (f.ro || f.key === "c.id" || f.key === "c.dm_ng") return;
     const el = document.getElementById(fieldId(f.key));
     if (!el) return;
     const v = String(el.value || "").trim();
     patch[f.key] = v || null;
   });
+  patch["c.dm_ng"] = document.getElementById("dmNgToggle")?.checked ? "1" : "0";
   const res = await fetch(`${CONFIG.API_BASE}/local/customers/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: {
@@ -1052,6 +1362,15 @@ async function saveModalCustomer() {
     return;
   }
   customers[modalCustomerIdx] = d.customer;
+  const nextDmNg = dmNgChecked(d.customer);
+  if (prevDmNg !== nextDmNg) {
+    try {
+      await syncDmNgToDigitalEyes(id, nextDmNg);
+    } catch (e) {
+      alert(`${e.message}\nローカル保存は完了しています。外部連携のみ失敗しました。`);
+    }
+  }
+  applyDmNgVisualState(dmNgChecked(d.customer));
   renderTable();
   await loadModalHistory(id);
   document.querySelectorAll("#modalEditForm .dirty").forEach((el) => el.classList.remove("dirty"));
@@ -1071,8 +1390,12 @@ async function saveSalesHistory() {
     nextActionDate: document.getElementById("shNextDate").value,
     memo: document.getElementById("shMemo").value.trim(),
   };
-  const res = await fetch(`${CONFIG.API_BASE}/local/customers/${encodeURIComponent(id)}/sales-history`, {
-    method: "POST",
+  const isEdit = !!editingSalesHistoryId;
+  const url = isEdit
+    ? `${CONFIG.API_BASE}/local/customers/${encodeURIComponent(id)}/sales-history/${encodeURIComponent(editingSalesHistoryId)}`
+    : `${CONFIG.API_BASE}/local/customers/${encodeURIComponent(id)}/sales-history`;
+  const res = await fetch(url, {
+    method: isEdit ? "PUT" : "POST",
     headers: {
       Authorization: `Bearer ${Auth.getToken()}`,
       "Content-Type": "application/json",
@@ -1080,10 +1403,61 @@ async function saveSalesHistory() {
     body: JSON.stringify(payload),
   });
   const d = await res.json();
-  if (!res.ok || !d.ok) { alert(d.message || "営業履歴の登録に失敗しました"); return; }
+  if (!res.ok || !d.ok) { alert(d.message || `営業履歴の${isEdit ? "更新" : "登録"}に失敗しました`); return; }
   document.getElementById("shMemo").value = "";
   document.getElementById("shDetail").value = "";
+  document.getElementById("shDate").value = new Date().toISOString().slice(0,10);
+  document.getElementById("shStaff").value = Auth.getUser()?.name || "";
+  document.getElementById("shType").value = "電話";
+  document.getElementById("shResult").value = "未設定";
+  document.getElementById("shNextDate").value = "";
+  editingSalesHistoryId = "";
+  const btn = document.querySelector('button[onclick="saveSalesHistory()"]');
+  if (btn) btn.textContent = "営業履歴を登録";
   await loadSalesHistory(id);
+}
+
+function editSalesHistory(id, encoded) {
+  let x = {};
+  try { x = JSON.parse(decodeURIComponent(encoded)); } catch (_) { x = {}; }
+  editingSalesHistoryId = String(id || "");
+  document.getElementById("shDate").value = String(x.actionDate || "").slice(0, 10);
+  document.getElementById("shStaff").value = String(x.staffName || "");
+  document.getElementById("shType").value = String(x.actionType || "電話");
+  document.getElementById("shResult").value = String(x.result || "未設定");
+  document.getElementById("shDetail").value = String(x.actionDetail || "");
+  document.getElementById("shMemo").value = String(x.memo || "");
+  document.getElementById("shNextDate").value = String(x.nextActionDate || "").slice(0, 10);
+  const btn = document.querySelector('button[onclick="saveSalesHistory()"]');
+  if (btn) btn.textContent = "営業履歴を更新";
+}
+
+function cancelEditSalesHistory() {
+  editingSalesHistoryId = "";
+  document.getElementById("shDate").value = new Date().toISOString().slice(0,10);
+  document.getElementById("shStaff").value = Auth.getUser()?.name || "";
+  document.getElementById("shType").value = "電話";
+  document.getElementById("shResult").value = "未設定";
+  document.getElementById("shDetail").value = "";
+  document.getElementById("shMemo").value = "";
+  document.getElementById("shNextDate").value = "";
+  const btn = document.querySelector('button[onclick="saveSalesHistory()"]');
+  if (btn) btn.textContent = "営業履歴を登録";
+}
+
+async function deleteSalesHistory(id) {
+  if (modalCustomerIdx == null) return;
+  if (!confirm("この営業履歴を削除しますか？")) return;
+  const c = customers[modalCustomerIdx];
+  const customerId = c["c.id"];
+  const res = await fetch(`${CONFIG.API_BASE}/local/customers/${encodeURIComponent(customerId)}/sales-history/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${Auth.getToken()}` },
+  });
+  const d = await res.json();
+  if (!res.ok || !d.ok) { alert(d.message || "営業履歴の削除に失敗しました"); return; }
+  if (String(editingSalesHistoryId) === String(id)) cancelEditSalesHistory();
+  await loadSalesHistory(customerId);
 }
 
 async function loadSalesHistory(customerId) {
@@ -1097,9 +1471,18 @@ async function loadSalesHistory(customerId) {
   const items = d.items || [];
   if (!items.length) { box.innerHTML = '<div style="color:rgb(150,160,170)">営業履歴はまだありません</div>'; return; }
   box.innerHTML = `<div class="table-scroll"><table class="list-table">
-    <thead><tr><th>対応日時</th><th>担当者</th><th>対応方法</th><th>対応内容</th></tr></thead>
+    <thead><tr><th>対応日時</th><th>担当者</th><th>対応方法</th><th>対応内容</th><th style="width:170px">操作</th></tr></thead>
     <tbody>
-      ${items.map((x)=>`<tr><td>${esc(x.actionDate || x.createdAt || "")}</td><td>${esc(x.staffName || "")}</td><td>${esc(x.actionType || "")}</td><td>${esc(x.actionDetail || x.memo || "")}</td></tr>`).join("")}
+      ${items.map((x)=>`<tr>
+        <td>${esc(x.actionDate || x.createdAt || "")}</td>
+        <td>${esc(x.staffName || "")}</td>
+        <td>${esc(x.actionType || "")}</td>
+        <td>${esc(x.actionDetail || x.memo || "")}</td>
+        <td>
+          <button class="btn btn-sm" onclick="editSalesHistory('${esc(x.id)}','${encodeURIComponent(JSON.stringify(x))}')">編集</button>
+          <button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="deleteSalesHistory('${esc(x.id)}')">削除</button>
+        </td>
+      </tr>`).join("")}
     </tbody></table></div>`;
 }
 
@@ -1382,6 +1765,7 @@ function renderTable() {
   });
   html += "</tbody></table></div>";
   document.getElementById("tableArea").innerHTML = html;
+  hydrateMiniQrs();
 }
 
 function renderPagination() {
@@ -1542,9 +1926,14 @@ function fillLabelTemplateSheet(ws, customer, labelsByKey) {
 
 async function openModal(idx) {
   modalCustomerIdx = idx;
+  modalSurveyQrCollapsed = true;
+  editingSalesHistoryId = "";
   const c = customers[idx];
   await refreshActivePropertyQrMeta();
   document.getElementById("modalTitle").textContent = `${c["c.name"]||""} ${c["c.kana"]?"（"+c["c.kana"]+"）":""}`;
+  const dmChk = document.getElementById("dmNgToggle");
+  if (dmChk) dmChk.checked = dmNgChecked(c);
+  applyDmNgVisualState(dmNgChecked(c));
   renderEditFields(c);
   bindModalDirtyTracking();
   setModalCustomerDirty(false);
@@ -1559,7 +1948,6 @@ async function openModal(idx) {
   loadReactions(c["c.id"]);
   loadSalesHistory(c["c.id"]);
   loadCustomerFiles(c["c.id"]);
-  document.getElementById("btnDetailConfig").style.display = isAdminRole() ? "inline-block" : "none";
   document.getElementById("historyHint").textContent = "";
   updateModalSurveyQr();
   const modal = document.getElementById("modal");
@@ -1572,10 +1960,12 @@ function closeModal() {
   }
   const modal = document.getElementById("modal");
   modal.classList.remove("open");
+  modal.classList.remove("dm-ng");
   setTimeout(() => {
     if (!modal.classList.contains("open")) modal.style.display = "none";
   }, 220);
   modalCustomerIdx = null;
+  editingSalesHistoryId = "";
   setModalCustomerDirty(false);
 }
 
@@ -1590,6 +1980,7 @@ function closeModal() {
   initialCid = new URLSearchParams(location.search).get("cid") || "";
   if (isAdminRole()) {
     document.getElementById("btnColConfig").style.display = "inline-block";
+    document.getElementById("btnDetailConfigTop").style.display = "inline-block";
     try {
       const aRes = await fetch(`${CONFIG.API_BASE}/user/accounts`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } });
       const aData = await aRes.json();

@@ -31,7 +31,13 @@
 .modal-box{width:620px;background:#fff}
 .modal-head{background:rgb(70,83,98);color:#fff;padding:12px 14px;display:flex;justify-content:space-between}
 .modal-body{padding:12px}
-.dropzone{border:2px dashed #9bb2c8;padding:24px;text-align:center;color:#5c6f83}
+.dropzone{border:2px dashed #9bb2c8;border-radius:6px;padding:0;text-align:center;color:#5c6f83;transition:border-color .15s, background .15s}
+.dropzone.drag-over{border-color:rgb(53,124,176);background:rgb(246,251,255);color:rgb(53,124,176)}
+.dropzone-inner{position:relative;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:20px 16px}
+.dropzone .file-input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0}
+.dropzone-hint{font-size:13px;line-height:1.5}
+.dropzone-hint small{display:block;font-size:11px;color:rgb(140,152,165);margin-top:4px}
+.dropzone-status{font-size:12px;color:rgb(90,98,108);max-width:100%;padding:0 8px;word-break:break-all}
 </style>
 </head>
 <body>
@@ -74,10 +80,16 @@
   <div class="modal-box">
     <div class="modal-head"><strong>素材アップロード</strong><button class="btn btn-sm" onclick="closeUpload()">✕</button></div>
     <div class="modal-body">
-      <div class="dropzone">
-        <input id="upFiles" type="file" multiple>
+      <div class="dropzone" id="uploadDropzone">
+        <div class="dropzone-inner">
+          <input id="upFiles" class="file-input" type="file" multiple accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip,.txt,.csv" onchange="updateUploadFileLabel()">
+          <div class="dropzone-hint">
+            <strong>ファイルをドラッグ＆ドロップ</strong><small>またはこの枠内をクリックして選択</small>
+          </div>
+          <div class="dropzone-status" id="upFilesStatus">ファイル未選択</div>
+        </div>
       </div>
-      <div style="font-size:12px;color:rgb(120,130,140);margin-top:6px">1ファイルあたり最大 5GB までアップロードできます。</div>
+      <div style="font-size:12px;color:rgb(120,130,140);margin-top:6px">1ファイルあたり最大 5GB まで（サーバー経由の場合は環境の制限により失敗することがあります）。画像・動画・Office・PDF などを想定しています。</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
         <div><label>種別</label><select id="upType" style="width:100%"></select></div>
       </div>
@@ -220,9 +232,63 @@ async function deleteAsset(id){
   closeDrawer();
 }
 
-function openUpload(){ document.getElementById("uploadModal").style.display = "flex"; }
+function updateUploadFileLabel(){
+  const input = document.getElementById("upFiles");
+  const el = document.getElementById("upFilesStatus");
+  if (!input || !el) return;
+  const list = [...(input.files || [])];
+  if (!list.length) { el.textContent = "ファイル未選択"; return; }
+  const names = list.map((f) => f.name).join(", ");
+  el.textContent = list.length === 1 ? `1件: ${names}` : `${list.length}件: ${names.length > 120 ? names.slice(0, 120) + "…" : names}`;
+}
+function appendFilesToInput(newFiles){
+  const input = document.getElementById("upFiles");
+  if (!input || !newFiles || !newFiles.length) return;
+  const dt = new DataTransfer();
+  for (const f of input.files) dt.items.add(f);
+  for (const f of newFiles) { if (f && f.size >= 0) dt.items.add(f); }
+  input.files = dt.files;
+  updateUploadFileLabel();
+}
+function bindUploadDropzone(){
+  const zone = document.getElementById("uploadDropzone");
+  if (!zone || zone.dataset.dndBound === "1") return;
+  zone.dataset.dndBound = "1";
+  zone.addEventListener("dragenter", (e) => { e.preventDefault(); e.stopPropagation(); zone.classList.add("drag-over"); });
+  zone.addEventListener("dragleave", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const rel = e.relatedTarget;
+    if (!rel || !zone.contains(rel)) zone.classList.remove("drag-over");
+  });
+  zone.addEventListener("dragover", (e) => { e.preventDefault(); e.stopPropagation(); });
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault(); e.stopPropagation();
+    zone.classList.remove("drag-over");
+    const files = e.dataTransfer && e.dataTransfer.files ? [...e.dataTransfer.files] : [];
+    if (files.length) appendFilesToInput(files);
+  });
+}
+function openUpload(){
+  document.getElementById("uploadModal").style.display = "flex";
+  const zone = document.getElementById("uploadDropzone");
+  if (zone) zone.classList.remove("drag-over");
+  updateUploadFileLabel();
+}
 function closeUpload(){ document.getElementById("uploadModal").style.display = "none"; }
 
+/** サーバー経由アップロード用。巨大バイナリで String.fromCharCode(...chunk) がスタックオーバーフローになるのを避ける */
+function fileToBase64UrlData(f){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || "");
+      const i = s.indexOf(",");
+      resolve(i >= 0 ? s.slice(i + 1) : s);
+    };
+    r.onerror = () => reject(r.error || new Error("ファイルの読み取りに失敗しました"));
+    r.readAsDataURL(f);
+  });
+}
 async function uploadAssets(){
   const input = document.getElementById("upFiles");
   const files = [...(input.files||[])];
@@ -230,44 +296,106 @@ async function uploadAssets(){
   const assetType = document.getElementById("upType").value;
   const tags = document.getElementById("upTags").value;
   const memo = document.getElementById("upMemo").value;
-  for(const f of files){
-    const preRes = await fetch(`${CONFIG.API_BASE}/media-assets/presigned-url`, {
-      method:"POST",
-      headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
-      body: JSON.stringify({
-        fileName: f.name,
-        mimeType: f.type || "application/octet-stream",
-        fileSize: f.size || 0,
-        assetType,
-      })
-    });
-    const pre = await preRes.json();
-    if(!preRes.ok || !pre.ok){ alert(pre.message||"署名付きURL取得失敗"); return; }
-    const putRes = await fetch(pre.presignedUrl, {
-      method:"PUT",
-      headers:{ "Content-Type": f.type || "application/octet-stream" },
-      body: f,
-    });
-    if(!putRes.ok){ alert("S3アップロードに失敗しました"); return; }
-    const cfRes = await fetch(`${CONFIG.API_BASE}/media-assets/confirm-upload`, {
-      method:"POST",
-      headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
-      body: JSON.stringify({
-        key: pre.key,
-        fileName: f.name,
-        mimeType: f.type || "application/octet-stream",
-        fileSize: f.size || 0,
-        assetType,
-        tags,
-        memo,
-      })
-    });
-    const cf = await cfRes.json();
-    if(!cfRes.ok || !cf.ok){ alert(cf.message||"アップロード完了処理失敗"); return; }
+  async function uploadViaServer(f){
+    const b64 = await fileToBase64UrlData(f);
+    const payload = {
+      fileName: f.name,
+      mimeType: f.type || "application/octet-stream",
+      fileSize: f.size || 0,
+      assetType,
+      tags,
+      memo,
+      dataBase64: b64,
+    };
+    const tryUrls = [
+      `${CONFIG.API_BASE}/local/media-asset-upload`,
+      `${CONFIG.API_BASE}/media-assets/upload-direct`,
+    ];
+    let lastErr = "";
+    for (const url of tryUrls) {
+      const res = await fetch(url, {
+        method:"POST",
+        headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
+        body: JSON.stringify(payload),
+      });
+      const text = await res.text();
+      let d = {};
+      try { d = text ? JSON.parse(text) : {}; } catch (_) {}
+      if (res.ok && d.ok) return;
+      lastErr = d.message || `HTTP ${res.status}`;
+      if (res.status !== 404) break;
+    }
+    throw new Error(lastErr || "サーバー経由アップロードに失敗しました");
   }
-  input.value = ""; document.getElementById("upTags").value=""; document.getElementById("upMemo").value="";
-  closeUpload();
-  await loadAssets();
+  let done = 0;
+  try {
+    for(const f of files){
+      const preRes = await fetch(`${CONFIG.API_BASE}/media-assets/presigned-url`, {
+        method:"POST",
+        headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
+        body: JSON.stringify({
+          fileName: f.name,
+          mimeType: f.type || "application/octet-stream",
+          fileSize: f.size || 0,
+          assetType,
+        })
+      });
+      const preText = await preRes.text();
+      let pre = {};
+      try { pre = preText ? JSON.parse(preText) : {}; } catch (_) {
+        throw new Error(`署名付きURL取得の応答が不正です（HTTP ${preRes.status}）`);
+      }
+      if(!preRes.ok || !pre.ok){ throw new Error(pre.message||`署名付きURL取得失敗（HTTP ${preRes.status}）`); }
+
+      try {
+        const putRes = await fetch(pre.presignedUrl, {
+          method:"PUT",
+          headers:{ "Content-Type": f.type || "application/octet-stream" },
+          body: f,
+        });
+        if(!putRes.ok){ throw new Error(`S3アップロードに失敗しました（${f.name}, HTTP ${putRes.status}）`); }
+      } catch (e) {
+        const msg = String(e && e.message ? e.message : e);
+        if (msg.includes("Failed to fetch")) {
+          // CORS等でブラウザ直PUTが失敗した場合はサーバー経由へフォールバック
+          await uploadViaServer(f);
+          done++;
+          continue;
+        }
+        throw e;
+      }
+
+      const cfRes = await fetch(`${CONFIG.API_BASE}/media-assets/confirm-upload`, {
+        method:"POST",
+        headers:{ Authorization:`Bearer ${Auth.getToken()}`, "Content-Type":"application/json" },
+        body: JSON.stringify({
+          key: pre.key,
+          fileName: f.name,
+          mimeType: f.type || "application/octet-stream",
+          fileSize: f.size || 0,
+          assetType,
+          tags,
+          memo,
+        })
+      });
+      const cfText = await cfRes.text();
+      let cf = {};
+      try { cf = cfText ? JSON.parse(cfText) : {}; } catch (_) {
+        throw new Error(`アップロード完了処理の応答が不正です（HTTP ${cfRes.status}）`);
+      }
+      if(!cfRes.ok || !cf.ok){ throw new Error(cf.message||`アップロード完了処理失敗（HTTP ${cfRes.status}）`); }
+      done++;
+    }
+    input.value = "";
+    updateUploadFileLabel();
+    document.getElementById("upTags").value="";
+    document.getElementById("upMemo").value="";
+    closeUpload();
+    await loadAssets();
+    alert(`アップロード完了: ${done}/${files.length}件`);
+  } catch (e) {
+    alert(e && e.message ? e.message : String(e));
+  }
 }
 
 async function bulkDelete(){
@@ -283,6 +411,7 @@ async function bulkDelete(){
 (async()=>{
   if(!await requireAuth()) return;
   document.getElementById("header").innerHTML = renderHeader("gallery.html");
+  bindUploadDropzone();
   await loadTypeMaster();
   await loadAssets();
 })();

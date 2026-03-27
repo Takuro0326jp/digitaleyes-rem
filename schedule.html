@@ -12,6 +12,11 @@
 .filter-item2 input, .filter-item2 select { min-width:140px; padding:7px 9px; border:1px solid #ced4da; font-size:13px; font-family:inherit; color:rgb(70,83,98); }
 .fc-wrap { background:#fff; border:1px solid rgb(224,224,224); padding:8px; }
 .badge-pending { background:#f0f0f0; border:1px solid #ddd; color:#666; padding:1px 6px; border-radius:10px; font-size:10px; margin-left:6px; }
+.badge-room-none { background:#ffecec; border:1px solid #f5a2a2; color:#b71c1c; padding:1px 6px; border-radius:10px; font-size:10px; margin-left:6px; font-weight:700; }
+.fc .event-room-none { box-shadow: inset 0 0 0 2px #e57373; color: #1e293b !important; }
+.fc .event-room-none .fc-event-main { background: linear-gradient(135deg, rgba(255,235,238,.9), rgba(255,255,255,.95)); color: #1e293b !important; }
+.fc .event-room-none .fc-event-main-frame { color: inherit; }
+.pending-notice { margin:8px 0 12px; padding:10px 12px; border:1px solid #f3c26b; background:#fff7e8; color:#8a5200; border-radius:6px; font-size:13px; font-weight:600; display:none; }
 .pill { display:inline-block; font-size:11px; border:1px solid rgb(224,224,224); padding:2px 8px; border-radius:12px; margin-right:6px; margin-top:4px; background:#fff; }
 .fc .fc-toolbar-title { font-size:20px; }
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 1000; display: none; align-items: center; justify-content: center; }
@@ -47,6 +52,7 @@
       <div><button class="btn btn-primary-solid btn-sm" onclick="applyFilters()">適用</button><button class="btn btn-sm" onclick="clearFilters()" style="margin-left:6px">すべてクリア</button></div>
     </div>
     <div id="activeFilters"></div>
+    <div id="pendingNotice" class="pending-notice"></div>
     <div class="fc-wrap"><div id="calendar"></div></div>
   </main>
 </div>
@@ -110,7 +116,9 @@ function colorByEvent(e) {
   if ([11].includes(s)) return "#cc3333";
   return "#357cb0";
 }
-function roomResourceList() { return [{ id: "none", title: "未設定" }, ...rooms.map((r) => ({ id: String(r.id), title: r.name }))]; }
+function roomResourceList() {
+  return [{ id: "none", title: "未設定" }, ...rooms.map((r) => ({ id: String(r.id), title: r.name }))];
+}
 function onTypeChange() { document.getElementById("webUrlBlock").style.display = document.getElementById("mType").value === "web" ? "block" : "none"; }
 function clearErr() { const el = document.getElementById("mErr"); el.style.display = "none"; el.textContent = ""; }
 function showErr(msg) { const el = document.getElementById("mErr"); el.style.display = "block"; el.textContent = msg; }
@@ -128,6 +136,68 @@ function activeFilterTags() {
     if (v) tags.push(`<span class="pill">${l}: ${v} <a href="#" onclick="clearOneFilter('${id}');return false;" style="margin-left:6px;color:#666;text-decoration:none">×</a></span>`);
   });
   document.getElementById("activeFilters").innerHTML = tags.join("");
+}
+function updatePendingNotice() {
+  const box = document.getElementById("pendingNotice");
+  if (!box) return;
+  const pending = currentEvents.filter((e) => e.status === "pending");
+  if (!pending.length) {
+    box.style.display = "none";
+    box.textContent = "";
+    return;
+  }
+  box.style.display = "block";
+  box.textContent = `仮登録が ${pending.length} 件あります。未設定の予定が混在するため、内容を確認して「確定」に更新してください。`;
+}
+function toDateYmdLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function toHmLocal(d) {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+async function persistCalendarDragChange(fcEvent, revertFn) {
+  const e = fcEvent.extendedProps || {};
+  const id = fcEvent.id;
+  if (!id) { if (typeof revertFn === "function") revertFn(); return; }
+  const st = fcEvent.start;
+  const ed = fcEvent.end;
+  if (!st || !ed) { if (typeof revertFn === "function") revertFn(); return; }
+  const payload = {
+    date: toDateYmdLocal(st),
+    startTime: toHmLocal(st),
+    endTime: toHmLocal(ed),
+    roomId: fcEvent.getResources && fcEvent.getResources()[0] ? (fcEvent.getResources()[0].id === "none" ? null : fcEvent.getResources()[0].id) : (fcEvent.getResourceId && fcEvent.getResourceId() !== "none" ? fcEvent.getResourceId() : null),
+    staffId: e.staffId || null,
+    participants: Number(e.participants || 1),
+    meetingType: e.meetingType || "visit",
+    webMeetingUrl: e.webMeetingUrl || "",
+    receptionStatus: e.receptionStatus || "",
+    customerNameSei: e.customerNameSei || "",
+    customerNameMei: e.customerNameMei || "",
+    customerEmail: e.customerEmail || "",
+    customerTel: e.customerTel || "",
+    customerStatus: e.customerStatus == null ? "" : e.customerStatus,
+    memo: e.memo || "",
+    status: e.status || "pending",
+    source: e.source || "manual",
+  };
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/schedule/events/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) throw new Error(d.message || "更新に失敗しました");
+    if (d.warning) alert(d.warning);
+    calendar.refetchEvents();
+  } catch (err) {
+    if (typeof revertFn === "function") revertFn();
+    alert(err.message || "ドラッグ更新に失敗しました");
+  }
 }
 function clearOneFilter(id) { document.getElementById(id).value = ""; applyFilters(); }
 function buildQuery(info) {
@@ -157,7 +227,19 @@ function recalcDailyTotal(dateStr) {
 }
 function eventToFc(e) {
   const title = `${(e.customerNameSei || "")}${(e.customerNameMei || "")}`.trim() || "未入力";
-  return { id: e.id, title, start: e.start, end: e.end, resourceId: e.roomId || "none", backgroundColor: colorByEvent(e), borderColor: colorByEvent(e), extendedProps: e };
+  const out = {
+    id: e.id,
+    title,
+    start: e.start,
+    end: e.end,
+    resourceId: e.roomId || "none",
+    backgroundColor: colorByEvent(e),
+    borderColor: colorByEvent(e),
+    extendedProps: e,
+  };
+  // 部屋未設定は背景を薄色にしているため、FC 既定の白文字だと視認性が悪い
+  if (!e.roomId) out.textColor = "#1e293b";
+  return out;
 }
 async function fetchEvents(info, success, failure) {
   try {
@@ -167,6 +249,7 @@ async function fetchEvents(info, success, failure) {
     const data = await res.json();
     if (!data.ok) throw new Error(data.message || "イベント取得に失敗しました");
     currentEvents = data.events || [];
+    updatePendingNotice();
     recalcDailyTotal(calendar.getDate().toISOString());
     success(currentEvents.map(eventToFc));
   } catch (e) { failure(e); }
@@ -274,10 +357,19 @@ async function initSchedule() {
     initialView: "resourceTimeGridDay",
     resourceAreaHeaderContent: "部屋",
     resources: roomResourceList(),
+    resourceOrder: (a, b) => {
+      if (a.id === "none" && b.id !== "none") return -1;
+      if (a.id !== "none" && b.id === "none") return 1;
+      return String(a.title || "").localeCompare(String(b.title || ""), "ja");
+    },
     slotDuration: "00:15:00",
     slotMinTime: "09:00:00",
     slotMaxTime: "20:00:00",
     selectable: true,
+    editable: true,
+    eventStartEditable: true,
+    eventDurationEditable: true,
+    eventResourceEditable: true,
     nowIndicator: true,
     headerToolbar: { left: "prev,next todayBtn", center: "title", right: "resourceTimeGridDay,timeGridWeek,dayGridMonth" },
     customButtons: { todayBtn: { text: "今日", click() { calendar.today(); recalcDailyTotal(new Date().toISOString()); } } },
@@ -287,7 +379,18 @@ async function initSchedule() {
       const e = arg.event.extendedProps;
       const nm = `${e.customerNameSei || ""}${e.customerNameMei || ""}`.trim() || "未入力";
       const staff = users.find((u) => String(u.id) === String(e.staffId || ""))?.name || "未設定";
-      return { html: `<div style="font-size:11px;line-height:1.35"><div style="font-weight:700">${nm}${e.status==="pending"?'<span class="badge-pending">仮</span>':""}</div><div>${e.participants||1}名 / ${staff}</div></div>` };
+      const roomNone = !e.roomId;
+      const textColor = roomNone ? "color:#1e293b" : "";
+      return {
+        html: `<div class="schedule-event-inner" style="font-size:11px;line-height:1.35;${textColor}">
+          <div style="font-weight:700">${nm}${e.status==="pending"?'<span class="badge-pending">仮</span>':""}${roomNone?'<span class="badge-room-none">部屋未設定</span>':""}</div>
+          <div>${e.participants||1}名 / ${staff}</div>
+        </div>`,
+      };
+    },
+    eventClassNames(arg) {
+      const e = arg.event.extendedProps || {};
+      return !e.roomId ? ["event-room-none"] : [];
     },
     dateClick(arg) {
       if (calendar.view.type === "dayGridMonth") { calendar.changeView("resourceTimeGridDay", arg.dateStr); return; }
@@ -317,6 +420,8 @@ async function initSchedule() {
       arg.el.appendChild(wrap);
     },
     eventClick(arg) { openModalWith(arg.event.extendedProps); },
+    eventDrop(arg) { persistCalendarDragChange(arg.event, arg.revert); },
+    eventResize(arg) { persistCalendarDragChange(arg.event, arg.revert); },
   });
   calendar.render();
 }

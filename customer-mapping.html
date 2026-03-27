@@ -330,10 +330,12 @@ async function saveMapKey(){
 function csv(rows, headers, keys, filename){const text=[headers.join(","),...rows.map(r=>keys.map(k=>`\"${String(r[k]??"").replace(/\"/g,'\"\"')}\"`).join(","))].join("\n"); const b=new Blob(["\uFEFF"+text],{type:"text/csv;charset=utf-8;"}); const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=filename;a.click();}
 function currentMapRows(){
   if (!statusCardFilter) return filteredCustomers;
-  return filteredCustomers.filter((c)=>norm(c["c.status"])===statusCardFilter);
+  const target = norm(statusCardFilter);
+  return filteredCustomers.filter((c)=>norm(c["c.status"])===target);
 }
 function setStatusCardFilter(v){
-  statusCardFilter = statusCardFilter === v ? "" : v;
+  const next = norm(v);
+  statusCardFilter = norm(statusCardFilter) === next ? "" : next;
   renderCards();
   renderMap();
 }
@@ -411,12 +413,19 @@ function clearAllFilters(){
 function renderCards(){
   bindStatusCardsClickDelegation();
   const total = filteredCustomers.length;
-  const statuses = VISIT_STATUSES_LIST.length ? VISIT_STATUSES_LIST : FALLBACK_VISIT_STATUSES;
+  const configured = (VISIT_STATUSES_LIST.length ? VISIT_STATUSES_LIST : FALLBACK_VISIT_STATUSES).map((s)=>norm(s)).filter(Boolean);
+  const observedSet = new Set(
+    filteredCustomers
+      .map((c)=>norm(c["c.status"]))
+      .filter(Boolean)
+  );
+  const statuses = [...new Set([...configured, ...observedSet])];
   const allActive = !statusCardFilter;
   let html = `<div class="status-card clickable ${allActive ? "active" : ""}" data-filter="__all__"><div class="k">全件</div><div class="v">${total}<span style="font-size:12px">件</span></div></div>`;
   for (const st of statuses) {
-    const cnt = filteredCustomers.filter((c) => norm(c["c.status"]) === st).length;
-    const active = statusCardFilter === st;
+    const stNorm = norm(st);
+    const cnt = filteredCustomers.filter((c) => norm(c["c.status"]) === stNorm).length;
+    const active = norm(statusCardFilter) === stNorm;
     html += `<div class="status-card clickable ${active ? "active" : ""}" data-filter="${encodeURIComponent(st)}"><div class="k">${escapeHtml(st)}</div><div class="v">${cnt}<span style="font-size:12px">件</span></div></div>`;
   }
   document.getElementById("cards").innerHTML = html;
@@ -524,6 +533,10 @@ async function exportTargets(){
   const today=new Date().toISOString().slice(0,10); document.getElementById("stat2").value=today;
   applyLegendColors();
   allCustomers=await fetchAllCustomers();
+  const observedStatuses = [...new Set(allCustomers.map((c)=>norm(c["c.status"])).filter(Boolean))];
+  const mergedStatusOptions = [...new Set([...(VISIT_STATUSES_LIST.length ? VISIT_STATUSES_LIST : FALLBACK_VISIT_STATUSES).map((s)=>norm(s)).filter(Boolean), ...observedStatuses])];
+  fillMulti("fStatus", mergedStatusOptions);
+  fillMulti("nStatus", mergedStatusOptions);
   filteredCustomers=[...allCustomers];
   renderCards();
   await renderMap();

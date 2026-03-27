@@ -39,6 +39,7 @@
       <button class="btn btn-primary-solid btn-sm" onclick="goNew()">新規登録</button>
       <button id="btnSelectAll" class="btn btn-sm" onclick="toggleSelectAll()">全て選択</button>
       <button id="btnDeleteSelected" class="btn btn-sm" onclick="openBulkDeleteModal()" disabled>削除</button>
+      <button type="button" id="btnClearLoginDefault" class="btn btn-sm" onclick="clearLoginDefault()" style="display:none">ログイン時表示を解除</button>
       <label style="margin-left:10px"><input type="checkbox" id="showSoldout" onchange="onFilterChange()"> 完売物件を表示</label>
       <select id="salesStatusFilter" class="select-sm" onchange="onFilterChange()">
         <option value="">販売状況: すべて</option>
@@ -85,6 +86,8 @@ let sortKey = "registeredAt";
 let sortDir = "desc";
 let deleteTarget = null;
 let searchTimer = null;
+/** ログイン時に最初に表示する物件ID（ユーザー設定） */
+let loginDefaultId = null;
 
 const SORTABLE_COLUMNS = [
   { key: "name", label: "物件名" },
@@ -194,13 +197,14 @@ function renderTable() {
           <tr>
             <th style="width:36px"><input type="checkbox" ${rows.length && rows.every((r) => selectedIds.has(r.id)) ? "checked" : ""} onclick="toggleSelectVisible(event)"></th>
             ${renderHeaderSort()}
+            <th style="width:112px" title="ログイン直後にヘッダーで選ばれる物件">ログイン時表示</th>
             <th style="width:70px">詳細</th>
             <th style="width:70px">削除</th>
           </tr>
         </thead>
         <tbody>
           ${rows.map((r) => `
-            <tr class="row-clickable" onclick="goDetail('${r.id}')">
+            <tr class="row-clickable" onclick="onPropertyRowClick(event, ${JSON.stringify(r.id)})">
               <td onclick="event.stopPropagation()"><input type="checkbox" ${selectedIds.has(r.id) ? "checked" : ""} onchange="toggleSelectOne('${r.id}')"></td>
               <td>
                 <div class="property-cell">
@@ -214,6 +218,9 @@ function renderTable() {
               <td>${valueOrDash(r.buildingConfirmDate)}</td>
               <td>${valueOrDash(r.remainingRate)}</td>
               <td>${valueOrDash(r.completionDate)}</td>
+              <td onclick="event.stopPropagation()" title="ログイン後、この物件を最初に表示します">
+                <input type="radio" name="loginDefaultProp" ${String(loginDefaultId) === String(r.id) ? "checked" : ""} onclick="event.stopPropagation()" onchange="onLoginDefaultPick(${JSON.stringify(r.id)})">
+              </td>
               <td onclick="event.stopPropagation()"><a href="property-detail.html?id=${encodeURIComponent(r.id)}">詳細</a></td>
               <td onclick="event.stopPropagation()"><button class="btn btn-sm" style="color:#cc0000;border-color:#cc0000" onclick="openSingleDeleteModal('${r.id}')">削除</button></td>
             </tr>
@@ -293,6 +300,36 @@ function onFilterChange() {
   renderTable();
 }
 
+function updateClearLoginDefaultBtn() {
+  const b = document.getElementById("btnClearLoginDefault");
+  if (b) b.style.display = loginDefaultId ? "inline-block" : "none";
+}
+
+async function onLoginDefaultPick(id) {
+  try {
+    await setLoginDefaultProperty(id);
+    loginDefaultId = readLoginDefaultIdForUi();
+    document.getElementById("header").innerHTML = renderHeader("property.html");
+    updateClearLoginDefaultBtn();
+  } catch (e) {
+    alert(e.message || "設定に失敗しました");
+    renderTable();
+  }
+}
+
+async function clearLoginDefault() {
+  if (!loginDefaultId) return;
+  try {
+    await setLoginDefaultProperty(null);
+    loginDefaultId = readLoginDefaultIdForUi();
+    document.getElementById("header").innerHTML = renderHeader("property.html");
+    updateClearLoginDefaultBtn();
+    renderTable();
+  } catch (e) {
+    alert(e.message || "解除に失敗しました");
+  }
+}
+
 function bindSearch() {
   const input = document.getElementById("keyword");
   input.addEventListener("input", () => {
@@ -324,6 +361,13 @@ function goNew() {
 
 function goDetail(id) {
   location.href = `property-detail.html?id=${encodeURIComponent(id)}`;
+}
+
+/** 行クリックで詳細へ。input / link / button 上のクリックは無視（ラジオ操作で詳細に飛ばない） */
+function onPropertyRowClick(ev, id) {
+  const el = ev.target;
+  if (el && el.closest && el.closest("input, button, a, label")) return;
+  goDetail(id);
 }
 
 function openSingleDeleteModal(id) {
@@ -369,6 +413,8 @@ async function deleteByIds(ids) {
   }
   selectedIds.clear();
   await requireAuth();
+  loginDefaultId = readLoginDefaultIdForUi();
+  updateClearLoginDefaultBtn();
   allRows = Auth.getProperties().map(toRow);
   populateSalesStatusFilter();
   renderTable();
@@ -376,9 +422,11 @@ async function deleteByIds(ids) {
 
 function load() {
   allRows = Auth.getProperties().map(toRow);
+  loginDefaultId = readLoginDefaultIdForUi();
   page = getCurrentPageFromUrl();
   populateSalesStatusFilter();
   bindSearch();
+  updateClearLoginDefaultBtn();
   renderTable();
 }
 

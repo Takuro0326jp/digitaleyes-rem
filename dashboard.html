@@ -252,16 +252,26 @@ async function fetchAllCustomersForDashboard(fields) {
   let rows = [];
   let total = 0;
   while (true) {
-    const data = await withTimeout(
-      apiCall({
-        page,
-        limit: chunk,
-        fields: JSON.stringify(fields),
-        order: JSON.stringify(["c.upd_date desc"]),
+    const qs = new URLSearchParams({
+      page: String(page),
+      limit: String(chunk),
+    });
+    const res = await withTimeout(
+      fetch(`${CONFIG.API_BASE}/local/customers?${qs.toString()}`, {
+        headers: { Authorization: `Bearer ${Auth.getToken()}` },
       }),
-      12000,
+      20000,
       `顧客集計データ取得(page:${page})`
     );
+    const d = await withTimeout(
+      res.json(),
+      10000,
+      `顧客集計レスポンス解析(page:${page})`
+    );
+    if (!res.ok || !d.ok) {
+      throw new Error(d.message || `顧客集計データ取得に失敗しました（HTTP ${res.status}）`);
+    }
+    const data = d.data || {};
     const part = data.result || [];
     total = parseCountLike(data.total_count || data.count || 0);
     rows = rows.concat(part);

@@ -20,6 +20,7 @@
 .modal-body { padding: 20px; }
 .modal-footer { padding: 12px 20px; border-top: 1px solid rgb(224,224,224); display:flex; justify-content:flex-end; gap:8px; }
 .tag { display:inline-block; padding:2px 8px; border-radius: 2px; font-size:11px; border:1px solid rgb(224,224,224); color:rgb(70,83,98); background:#fff; }
+.tag.master { border-color: rgba(122,74,184,.45); background: rgba(122,74,184,.08); font-weight:600; }
 .tag.admin { border-color: rgba(53,124,176,.4); background: rgba(53,124,176,.06); }
 .tag.staff { border-color: rgba(0,130,60,.35); background: rgba(0,130,60,.06); }
 .prop-checks { display:flex; flex-wrap:wrap; gap:10px; padding:10px; border:1px solid rgb(224,224,224); background:#fff; }
@@ -35,6 +36,8 @@
       <h1>アカウント設定</h1>
       <span id="totalLabel" style="font-size:13px;color:rgb(120,130,140)"></span>
     </div>
+
+    <div id="mailSmtpHint" style="display:none;max-width:900px;margin-bottom:14px;padding:10px 14px;border-radius:6px;font-size:13px;line-height:1.5"></div>
 
     <div class="action-row">
       <button class="btn btn-primary-solid btn-sm" id="btnNew" onclick="openCreate()">新規登録</button>
@@ -71,16 +74,12 @@
       <div class="form-row">
         <div class="form-group" style="flex:1;min-width:220px">
           <label>権限 <span style="color:#cc0000">*</span></label>
-          <select id="fRole" onchange="onRoleChange()">
-            <option value="">選択してください</option>
-            <option value="2">管理者</option>
-            <option value="3">不動産担当者</option>
-          </select>
+          <select id="fRole" onchange="onRoleChange()"></select>
           <div class="err" id="eRole"></div>
         </div>
         <div class="form-group" style="flex:1;min-width:220px">
           <label>クライアント <span style="color:#cc0000">*</span></label>
-          <select id="fClient"></select>
+          <select id="fClient" onchange="onClientChange()"></select>
           <div class="err" id="eClient"></div>
         </div>
       </div>
@@ -88,6 +87,7 @@
       <div id="propBlock">
         <div class="form-group">
           <label>担当物件 <span style="color:#cc0000">*</span></label>
+          <p id="propFilterHint" style="margin:0 0 8px;font-size:12px;color:rgb(120,130,140);line-height:1.5"></p>
           <div class="prop-checks" id="propChecks"></div>
           <div class="err" id="eProps"></div>
         </div>
@@ -95,16 +95,19 @@
 
       <div class="form-row">
         <div class="form-group" style="flex:1;min-width:220px">
-          <label>パスワード（新規は必須・8文字以上）</label>
-          <input id="fPassword" type="password" placeholder="********">
+          <label>パスワード（任意・8文字以上）</label>
+          <input id="fPassword" type="password" placeholder="空欄可">
           <div class="err" id="ePassword"></div>
         </div>
         <div class="form-group" style="flex:1;min-width:220px">
           <label>パスワード（確認）</label>
-          <input id="fPassword2" type="password" placeholder="********">
+          <input id="fPassword2" type="password" placeholder="空欄可">
           <div class="err" id="ePassword2"></div>
         </div>
       </div>
+      <p id="passwordInviteNote" style="display:none;margin:0 0 14px;padding:10px 12px;background:#f6f9fc;border:1px solid rgb(220,230,240);border-radius:6px;font-size:12px;line-height:1.55;color:rgb(70,83,98)">
+        <strong>招待メールで案内する場合</strong>：パスワードは<strong>空欄のままで構いません</strong>。保存後に一覧の「招待」を押すと、<strong>新しい仮パスワードがメールで届きます</strong>（そのパスワードで初回ログインしてください）。手動で決める場合は8文字以上を両方に入力してください。
+      </p>
 
       <div id="formMsg" class="error-box" style="display:none"></div>
     </div>
@@ -133,6 +136,31 @@
 <script src="common.js"></script>
 <script>
 const LIMIT = 10;
+const REM_ROLE_MASTER = 1;
+const REM_ROLE_CLIENT_ADMIN = 2;
+const REM_ROLE_PROPERTY_MANAGER = 3;
+function remIsMaster(role) { return Number(role) === REM_ROLE_MASTER; }
+function remIsAdminLike(role) {
+  const n = Number(role);
+  return n === REM_ROLE_MASTER || n === REM_ROLE_CLIENT_ADMIN;
+}
+function remIsPropertyManager(role) { return Number(role) === REM_ROLE_PROPERTY_MANAGER; }
+function remSeesAllProperties(role) { return remIsAdminLike(role); }
+
+function fillRoleSelect(selected) {
+  const me = Auth.getUser();
+  const sel = document.getElementById("fRole");
+  if (!sel) return;
+  let html = '<option value="">選択してください</option>';
+  if (remIsMaster(me?.role)) {
+    html += '<option value="1">マスター</option>';
+  }
+  html += '<option value="2">クライアント管理者</option><option value="3">物件管理者</option>';
+  sel.innerHTML = html;
+  const v = selected != null && selected !== "" ? String(selected) : "";
+  if (v && [...sel.options].some((o) => o.value === v)) sel.value = v;
+}
+
 let accounts = [];
 let props = [];
 let clientsMaster = [];
@@ -161,9 +189,10 @@ function setPageToUrl(p) {
 }
 
 function roleTag(role) {
-  return role === 2
-    ? '<span class="tag admin">管理者</span>'
-    : '<span class="tag staff">不動産担当者</span>';
+  const r = Number(role);
+  if (r === REM_ROLE_MASTER) return '<span class="tag master">マスター</span>';
+  if (r === REM_ROLE_CLIENT_ADMIN) return '<span class="tag admin">クライアント管理者</span>';
+  return '<span class="tag staff">物件管理者</span>';
 }
 
 function renderTable() {
@@ -182,7 +211,7 @@ function renderTable() {
     return;
   }
 
-  const canAdmin = Number(me?.role) === 2;
+  const canAdmin = remIsAdminLike(me?.role);
   document.getElementById("btnNew").style.display = canAdmin ? "inline-block" : "none";
 
   let html = `<div class="table-scroll"><table class="list-table">
@@ -198,7 +227,7 @@ function renderTable() {
       <td style="color:rgb(53,124,176)">${a.email || ""}</td>
       <td>${roleTag(Number(a.role))}</td>
       <td>${a.client || ""}</td>
-      <td>${Number(a.role) === 2 ? "全物件" : (propNames.length ? propNames.join(" / ") : "―")}</td>
+      <td>${remSeesAllProperties(a.role) ? "全物件" : (propNames.length ? propNames.join(" / ") : "―")}</td>
       <td><button class="btn btn-sm" ${canAdmin ? "" : "disabled"} onclick="sendInvite('${a.id}')">招待</button></td>
       <td><button class="btn btn-sm" onclick="openEdit('${a.id}')">詳細</button></td>
       <td><button class="btn btn-sm" ${isMe ? "disabled" : ""} style="color:#cc0000;border-color:#cc0000" onclick="openDelete('${a.id}')">削除</button></td>
@@ -225,7 +254,7 @@ function goPage(p) {
 
 async function loadAll() {
   const me = Auth.getUser();
-  const canAdmin = Number(me?.role) === 2;
+  const canAdmin = remIsAdminLike(me?.role);
 
   const [aRes, pRes, cRes] = await Promise.all([
     fetch(`${CONFIG.API_BASE}/user/accounts`, { headers: { Authorization: `Bearer ${Auth.getToken()}` } }),
@@ -291,20 +320,65 @@ function setErr(id, msg) {
   el.style.display = "block";
 }
 
+function propsForSelectedClient() {
+  const client = document.getElementById("fClient").value.trim();
+  if (!client) return [];
+  return props.filter((p) => String(p.clientName || "").trim() === client);
+}
+
 function onRoleChange() {
   const role = document.getElementById("fRole").value;
   document.getElementById("propBlock").style.display = role === "3" ? "block" : "none";
+  if (role === "3") {
+    const allowed = new Set(propsForSelectedClient().map((p) => String(p.id)));
+    const sel = selectedPropIds().filter((id) => allowed.has(String(id)));
+    renderPropChecks(sel);
+  } else {
+    updatePropFilterHint();
+  }
+}
+
+function onClientChange() {
+  if (document.getElementById("fRole").value !== "3") return;
+  const allowed = new Set(propsForSelectedClient().map((p) => String(p.id)));
+  const sel = selectedPropIds().filter((id) => allowed.has(String(id)));
+  renderPropChecks(sel);
+}
+
+function updatePropFilterHint() {
+  const hint = document.getElementById("propFilterHint");
+  if (!hint) return;
+  if (document.getElementById("fRole").value !== "3") {
+    hint.textContent = "";
+    return;
+  }
+  const client = document.getElementById("fClient").value.trim();
+  if (!client) {
+    hint.textContent =
+      "先にクライアントを選ぶと、そのクライアントに紐づいた物件だけが表示されます。物件側の設定は物件詳細の「紐づくクライアント」で行います。";
+    return;
+  }
+  const list = propsForSelectedClient();
+  if (!list.length) {
+    hint.textContent =
+      "このクライアントに紐づく物件がありません。各物件の詳細画面で「紐づくクライアント」を設定してください。";
+    return;
+  }
+  hint.textContent = `このクライアントに紐づく物件 ${list.length} 件を表示しています。`;
 }
 
 function renderPropChecks(selected) {
   const sel = (selected || []).map((x) => String(x));
   const wrap = document.getElementById("propChecks");
   wrap.innerHTML = "";
-  props.forEach(p => {
+  const role = document.getElementById("fRole").value;
+  const list = role === "3" ? propsForSelectedClient() : props;
+  list.forEach((p) => {
     const checked = sel.includes(String(p.id));
-    const id = `prop_${p.id}`;
-    wrap.innerHTML += `<label><input type="checkbox" id="${id}" value="${p.id}" ${checked?"checked":""}>${safePropName(p)}</label>`;
+    const pid = `prop_${p.id}`;
+    wrap.innerHTML += `<label><input type="checkbox" id="${pid}" value="${p.id}" ${checked ? "checked" : ""}>${safePropName(p)}</label>`;
   });
+  updatePropFilterHint();
 }
 
 function selectedPropIds() {
@@ -317,10 +391,12 @@ function openCreate() {
   document.getElementById("editId").value = "";
   document.getElementById("fName").value = "";
   document.getElementById("fEmail").value = "";
-  document.getElementById("fRole").value = "";
+  fillRoleSelect("");
   renderClientSelect("");
   document.getElementById("fPassword").value = "";
   document.getElementById("fPassword2").value = "";
+  const note = document.getElementById("passwordInviteNote");
+  if (note) note.style.display = "block";
   renderPropChecks([]);
   onRoleChange();
   document.getElementById("editModal").style.display = "flex";
@@ -334,12 +410,14 @@ function openEdit(id) {
   document.getElementById("editId").value = a.id;
   document.getElementById("fName").value = a.name || "";
   document.getElementById("fEmail").value = a.email || "";
-  document.getElementById("fRole").value = String(a.role || "");
+  fillRoleSelect(a.role);
   renderClientSelect(a.client || "");
   document.getElementById("fPassword").value = "";
   document.getElementById("fPassword2").value = "";
-  renderPropChecks(a.propertyIds || []);
+  const note = document.getElementById("passwordInviteNote");
+  if (note) note.style.display = "none";
   onRoleChange();
+  renderPropChecks(a.propertyIds || []);
   document.getElementById("editModal").style.display = "flex";
 }
 
@@ -363,13 +441,35 @@ async function saveAccount() {
   if (!role) { setErr("eRole", "選択してください"); ok = false; }
   if (!client) { setErr("eClient", "必須です"); ok = false; }
   if (!id) {
-    if (!password || password.length < 8) { setErr("ePassword", "8文字以上で入力してください"); ok = false; }
-    if (password !== passwordConfirm) { setErr("ePassword2", "一致しません"); ok = false; }
+    const hasPwd = password.length > 0 || passwordConfirm.length > 0;
+    if (hasPwd) {
+      if (password.length < 8) { setErr("ePassword", "8文字以上で入力してください"); ok = false; }
+      if (password !== passwordConfirm) { setErr("ePassword2", "一致しません"); ok = false; }
+    }
   } else if (password) {
     if (password.length < 8) { setErr("ePassword", "8文字以上で入力してください"); ok = false; }
     if (password !== passwordConfirm) { setErr("ePassword2", "一致しません"); ok = false; }
   }
-  if (role === "3" && propertyIds.length === 0) { setErr("eProps", "1件以上選択してください"); ok = false; }
+  if (role === "3") {
+    const clientSel = document.getElementById("fClient").value.trim();
+    const list = propsForSelectedClient();
+    if (!clientSel) {
+      setErr("eClient", "物件管理者では必須です");
+      ok = false;
+    } else if (!list.length) {
+      setErr("eProps", "このクライアントに紐づく物件がありません。物件詳細で紐づけを設定してください。");
+      ok = false;
+    } else if (propertyIds.length === 0) {
+      setErr("eProps", "1件以上選択してください");
+      ok = false;
+    } else {
+      const allowedIds = new Set(list.map((p) => String(p.id)));
+      if (propertyIds.some((pid) => !allowedIds.has(String(pid)))) {
+        setErr("eProps", "選択した物件が、選んだクライアントに紐づく一覧と一致しません。");
+        ok = false;
+      }
+    }
+  }
   if (!ok) return;
 
   const payload = { name, email, role: Number(role), client, propertyIds, password, passwordConfirm };
@@ -427,6 +527,56 @@ async function confirmDelete() {
   await loadAll();
 }
 
+async function refreshMailSmtpHint() {
+  const el = document.getElementById("mailSmtpHint");
+  if (!el) return;
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/user/mail-status`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    const d = await res.json();
+    if (!res.ok || !d.ok) return;
+    el.style.display = "block";
+    if (d.smtpConfigured) {
+      el.className = "";
+      el.style.background = "#f0fff4";
+      el.style.border = "1px solid #b2dfdb";
+      el.style.color = "rgb(50,70,60)";
+      el.innerHTML =
+        '<span>招待メール: SMTP が設定されています。「招待」で送信するか、下のボタンで<strong>ログイン中のメール宛にテスト送信</strong>して疎通を確認できます。</span> ' +
+        '<button type="button" class="btn btn-sm" id="btnMailTest" onclick="sendMailTest()">テスト送信</button>';
+    } else {
+      el.className = "error-box";
+      el.style.background = "";
+      el.style.border = "";
+      el.style.color = "";
+      el.innerHTML =
+        "招待メール: <strong>SMTP が未設定</strong>です。ローカルは <code>.env</code>、本番は Vercel の Environment Variables に <code>SMTP_HOST</code>・<code>SMTP_PORT</code>（例: 587）・<code>SMTP_USER</code>・<code>SMTP_PASS</code>・<code>MAIL_FROM</code>（任意）を設定し、サーバーを再起動／再デプロイしてください。";
+    }
+  } catch (_) {}
+}
+
+async function sendMailTest() {
+  const me = Auth.getUser();
+  if (!remIsAdminLike(me?.role)) return;
+  if (!confirm(`ログイン中のアドレス（${me.email || ""}）へテストメールを送ります。よろしいですか？`)) return;
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/user/mail-test`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${Auth.getToken()}`, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.ok) {
+      alert(d.message || "テスト送信に失敗しました");
+      return;
+    }
+    alert("テストメールを送信しました。受信トレイ（迷惑メールフォルダも含む）を確認してください。");
+  } catch (e) {
+    alert(e.message || "通信に失敗しました");
+  }
+}
+
 async function sendInvite(id) {
   const a = accounts.find((x) => x.id === id);
   if (!a) return;
@@ -453,12 +603,14 @@ async function sendInvite(id) {
   const me = Auth.getUser();
   document.getElementById("header").innerHTML = renderHeader("account.html");
   currentPage = getPageFromUrl();
-  if (Number(me?.role) !== 2 && Number(me?.role) !== 3) {
+  if (!remIsAdminLike(me?.role) && !remIsPropertyManager(me?.role)) {
     document.getElementById("tableArea").innerHTML = '<div class="error-box">⚠️ 権限情報が不正です</div>';
     return;
   }
-  try { await loadAll(); }
-  catch (e) { document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`; }
+  try {
+    await loadAll();
+    if (remIsAdminLike(me?.role)) await refreshMailSmtpHint();
+  } catch (e) { document.getElementById("tableArea").innerHTML = `<div class="error-box">⚠️ ${e.message}</div>`; }
 })();
 </script>
 </body>
