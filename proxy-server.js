@@ -8,6 +8,7 @@ const {
   queryLocalCustomers,
   getSyncStatus,
   getVisitStatuses,
+  getCustomerFilterOptions,
   saveVisitStatuses,
   patchLocalCustomer,
   listCustomerHistory,
@@ -26,6 +27,7 @@ const {
   getCustomerSpecFieldDefs,
   getCustomerDetailFieldConfig,
   saveCustomerDetailFieldConfig,
+  getPropertySalesMetrics,
   DEFAULT_CUSTOMER_DETAIL_FIELDS,
   DEFAULT_VISIT_STATUSES,
 } = require("./lib/sync-service");
@@ -91,6 +93,7 @@ const {
 const { buildWeeklyReportBuffer } = require("./lib/weekly-report");
 const { buildCustomerAnalysisReport } = require("./lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("./lib/customer-karte-export");
+const { buildLabelWorkbookWithOpenpyxl } = require("./lib/label-print-openpyxl");
 const userStore = require("./lib/user-store");
 const { applyLoginDefaultToUser } = require("./lib/login-default");
 const {
@@ -845,7 +848,7 @@ const server = http.createServer(async (req, res) => {
     if (!prop) { json(res, 404, { ok: false, message: "物件が見つかりません" }); return; }
     try {
       const body = await readBody(req);
-      const r = await addPropertyImage(id, me.tenantId, body || {});
+      const r = await addPropertyImage(id, me.tenantId, body || {}, me.name || "");
       json(res, 200, { ok: true, imageId: r.id });
     } catch (e) {
       json(res, 400, { ok: false, message: e.message || String(e) });
@@ -863,7 +866,7 @@ const server = http.createServer(async (req, res) => {
     const pid = tail.slice(0, i);
     const iid = tail.slice(i + "/images/".length);
     try {
-      await deletePropertyImage(pid, me.tenantId, decodeURIComponent(iid));
+      await deletePropertyImage(pid, me.tenantId, decodeURIComponent(iid), me.name || "");
       json(res, 200, { ok: true });
     } catch (e) {
       json(res, 400, { ok: false, message: e.message || String(e) });
@@ -1790,6 +1793,61 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { ok: true, statuses: arr });
     } catch (e) {
       console.error("[local/visit-statuses GET]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+  if (urlPath === "/local/customers/filter-options" && req.method === "GET") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const prop = await getActivePropertyForUser(session.userId);
+      if (!prop) { json(res, 200, { ok: true, options: {} }); return; }
+      const options = await getCustomerFilterOptions(prop.id);
+      json(res, 200, { ok: true, options });
+    } catch (e) {
+      console.error("[local/customers/filter-options]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  if (urlPath === "/local/property-sales-metrics" && req.method === "GET") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const prop = await getActivePropertyForUser(session.userId);
+      if (!prop) { json(res, 400, { ok: false, message: "物件が選択されていません。" }); return; }
+      const totalUnitsRaw = fullUrl.searchParams.get("totalUnits") || "";
+      const metrics = await getPropertySalesMetrics(prop.id, totalUnitsRaw);
+      json(res, 200, { ok: true, metrics });
+    } catch (e) {
+      console.error("[local/property-sales-metrics]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  if (urlPath === "/local/customers/label-print" && req.method === "POST") {
+    const session = getSession(getToken(req));
+    if (!session) { json(res, 401, { ok: false }); return; }
+    try {
+      const body = await readBody(req);
+      const customers = Array.isArray(body?.customers) ? body.customers : [];
+      if (!customers.length) {
+        json(res, 400, { ok: false, message: "customers が空です" });
+        return;
+      }
+      const templatePath = path.join(__dirname, "assets", "template.xlsx");
+      const out = await buildLabelWorkbookWithOpenpyxl(templatePath, customers);
+      const filename = `label_print_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      res.writeHead(200, {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+      });
+      res.end(out);
+    } catch (e) {
+      console.error("[local/customers/label-print]", e.stack || e);
       json(res, 500, { ok: false, message: e.message || String(e) });
     }
     return;

@@ -33,6 +33,21 @@
 details > summary { cursor:pointer; font-weight:600; color:rgb(70,83,98); margin-bottom:8px; }
 .field-input { width:100%; padding:8px 10px; border:1px solid #ced4da; font-family:inherit; }
 .field-input.dirty { border-color: rgb(53,124,176); background: rgb(246,251,255); }
+.room-modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.45); display:none; align-items:center; justify-content:center; z-index:1200; }
+.room-modal { width:min(1220px,95vw); max-height:92vh; background:#fff; border-radius:8px; border:1px solid #d7dde5; display:flex; flex-direction:column; }
+.room-modal-head { padding:12px 14px; border-bottom:1px solid #e5e9ef; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.room-modal-head h3 { margin:0; font-size:16px; margin-right:auto; }
+.room-modal-body { padding:12px 14px; overflow:auto; }
+.room-scroll { max-height:54vh; overflow:auto; border:1px solid #e1e6ed; border-radius:6px; }
+.room-table { width:100%; border-collapse:collapse; font-size:13px; }
+.room-table th,.room-table td { border-bottom:1px solid #edf1f5; padding:8px; vertical-align:top; }
+.room-table th { position:sticky; top:0; background:#f8fafc; z-index:2; font-weight:600; }
+.room-detail-row { background:#f7f8fa; }
+.room-row-input { width:100%; padding:6px 8px; border:1px solid #ced4da; font-family:inherit; box-sizing:border-box; }
+.room-actions { padding:10px 14px; border-top:1px solid #e5e9ef; display:flex; justify-content:flex-end; gap:8px; }
+.drop-zone { border:1px dashed #9fb3c9; background:#f7fbff; border-radius:6px; padding:12px; text-align:center; font-size:12px; color:#4d6278; }
+.panel-switch { display:none; }
+.panel-switch.open { display:block; }
 @media (max-width: 1200px) { .cards { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 </style>
 </head>
@@ -48,6 +63,64 @@ details > summary { cursor:pointer; font-weight:600; color:rgb(70,83,98); margin
     <div id="content"><div class="loading-spinner"></div></div>
   </main>
 </div>
+</div>
+<div id="roomModalOverlay" class="room-modal-overlay">
+  <div class="room-modal">
+    <div class="room-modal-head">
+      <h3>居室情報</h3>
+      <button class="btn btn-primary-solid btn-sm" type="button" onclick="showRoomCsvPanel()">CSVインポート</button>
+      <button class="btn btn-sm" type="button" id="btnRoomToggleSelect" onclick="toggleSelectAllRooms()">全て選択</button>
+      <button class="btn btn-sm" type="button" style="color:#cc0000;border-color:#cc0000" onclick="deleteSelectedRooms()">削除</button>
+      <button class="btn btn-sm" type="button" onclick="closeRoomModal()">閉じる</button>
+    </div>
+    <div class="room-modal-body">
+      <div id="roomListPanel" class="panel-switch open">
+        <div class="room-scroll">
+          <table class="room-table">
+            <thead>
+              <tr>
+                <th style="width:42px"></th>
+                <th style="min-width:210px">タイプ名・号棟名</th>
+                <th style="min-width:180px">居室情報（図面番号）</th>
+                <th style="min-width:150px">間取り</th>
+                <th style="min-width:140px">図面（画像登録）</th>
+                <th style="width:90px">詳細</th>
+              </tr>
+            </thead>
+            <tbody id="roomRows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="roomCsvPanel" class="panel-switch">
+        <h4 style="margin:0 0 10px">CSVアップロード</h4>
+        <p style="margin:0 0 10px;font-size:12px"><a href="javascript:void(0)" onclick="downloadRoomCsvTemplate()">CSVテンプレートをダウンロード</a></p>
+        <div class="drop-zone" id="roomCsvDropZone">CSVファイルをドラッグ＆ドロップ、または選択してください</div>
+        <div style="margin-top:8px"><input id="roomCsvFile" type="file" accept=".csv,text/csv"></div>
+        <p style="font-size:12px;color:#667; margin-top:6px">（CSVのみ対応）</p>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn btn-primary-solid btn-sm" type="button" onclick="registerRoomCsv()">CSVを登録する</button>
+          <button class="btn btn-sm" type="button" onclick="showRoomListPanel()">キャンセル</button>
+        </div>
+      </div>
+      <div id="roomImagePanel" class="panel-switch">
+        <h4 style="margin:0 0 10px">画像アップロード</h4>
+        <div class="drop-zone" id="roomImageDropZone">PDF / jpg / jpeg / png / webp をドラッグ＆ドロップ、または選択してください</div>
+        <div style="margin-top:8px"><input id="roomImageFile" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp"></div>
+        <div style="margin-top:8px">
+          <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">ALTテキスト（必須）</label>
+          <input id="roomImageAlt" class="room-row-input" placeholder="例: Aタイプ図面">
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn btn-primary-solid btn-sm" type="button" onclick="registerRoomImage()">画像を登録する</button>
+          <button class="btn btn-sm" type="button" onclick="showRoomListPanel()">キャンセル</button>
+        </div>
+      </div>
+    </div>
+    <div class="room-actions">
+      <button class="btn btn-sm" type="button" onclick="addRoomRow()">行を追加</button>
+      <button class="btn btn-primary-solid btn-sm" type="button" onclick="confirmRegisterRooms()">登録</button>
+    </div>
+  </div>
 </div>
 <script src="common.js"></script>
 <script>
@@ -70,9 +143,80 @@ function attrEsc(s) {
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;");
 }
+function toYmd(v) {
+  const s = String(v || "").trim();
+  if (!s) return "";
+  const m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, "0")}-${String(m[3]).padStart(2, "0")}`;
+  const d = new Date(s);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const da = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${da}`;
+}
+function elapsedDaysFrom(ymd) {
+  const n = toYmd(ymd);
+  if (!n) return "";
+  const s = new Date(`${n}T00:00:00`);
+  if (Number.isNaN(s.getTime())) return "";
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  const diff = Math.floor((now.getTime() - s.getTime()) / 86400000);
+  return diff >= 0 ? String(diff) : "0";
+}
+async function fetchPropertySalesMetrics(totalUnits) {
+  const qs = new URLSearchParams();
+  if (String(totalUnits || "").trim()) qs.set("totalUnits", String(totalUnits).trim());
+  const res = await fetch(`${CONFIG.API_BASE}/local/property-sales-metrics?${qs.toString()}`, {
+    headers: { Authorization: `Bearer ${Auth.getToken()}` },
+  });
+  const d = await res.json();
+  if (!res.ok || !d.ok) throw new Error(d.message || "販売指標の取得に失敗しました");
+  return d.metrics || {};
+}
 let currentPropertyId = null;
 let currentPropertyData = null;
 let propertyDirty = false;
+const ROOM_CSRF_TOKEN = "LzMAvKBmJ5jpiYMJjNkg9Wo7EfIbpcf5PfLeX5X2";
+const ROOM_MADORI_OPTIONS = ["1R","1K","1DK","1LDK","2LDK","3LDK","4LDK","5LDK","6LDK以上","その他"];
+let roomDraft = [];
+let roomImageTargetId = "";
+let roomSelectAll = false;
+
+function uid() { return (crypto?.randomUUID?.() || `r_${Date.now()}_${Math.random().toString(16).slice(2)}`); }
+function emptyRoomItem() {
+  return {
+    id: uid(),
+    csrfToken: ROOM_CSRF_TOKEN,
+    propertyId: currentPropertyId || "",
+    checked: false,
+    openDetail: false,
+    typeName: "",
+    drawingInfo: "",
+    madori: "",
+    imageName: "",
+    imageData: "",
+    imageAlt: "",
+    roomNo: "",
+    salePrice: "",
+    landPrice: "",
+    buildingPrice: "",
+    tax: "",
+    prepaidGroundRent: "",
+    keyMoney: "",
+    discountAmount: "",
+    salesPhase: "",
+  };
+}
+function normalizeRoomItems(raw) {
+  if (!Array.isArray(raw) || !raw.length) return [];
+  return raw.map((x) => ({ ...emptyRoomItem(), ...(x || {}), id: String(x?.id || uid()), propertyId: currentPropertyId || "" }));
+}
+function roomSummaryText(items = roomDraft) {
+  const names = items.map((x) => String(x.typeName || "").trim()).filter(Boolean);
+  return [...new Set(names)].join(", ");
+}
 
 function setPropertyDirty(v) {
   propertyDirty = Boolean(v);
@@ -163,6 +307,218 @@ async function deleteImage(imageId) {
   const d = await res.json();
   if (!res.ok || !d.ok) throw new Error(d.message || "画像削除に失敗しました");
   await loadImages(currentPropertyId);
+}
+
+function setRoomPanel(name) {
+  ["roomListPanel", "roomCsvPanel", "roomImagePanel"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle("open", id === name);
+  });
+}
+function showRoomListPanel() { setRoomPanel("roomListPanel"); }
+function showRoomCsvPanel() { setRoomPanel("roomCsvPanel"); }
+function showRoomImagePanel(roomId) {
+  roomImageTargetId = String(roomId || "");
+  const f = document.getElementById("roomImageFile");
+  const a = document.getElementById("roomImageAlt");
+  if (f) f.value = "";
+  if (a) a.value = "";
+  setRoomPanel("roomImagePanel");
+}
+function addRoomRow() {
+  roomDraft.push(emptyRoomItem());
+  setPropertyDirty(true);
+  renderRoomRows();
+}
+function openRoomModal() {
+  if (!roomDraft.length) roomDraft.push(emptyRoomItem());
+  renderRoomRows();
+  showRoomListPanel();
+  document.getElementById("roomModalOverlay").style.display = "flex";
+}
+function closeRoomModal() {
+  document.getElementById("roomModalOverlay").style.display = "none";
+}
+function toggleRoomDetail(id) {
+  roomDraft = roomDraft.map((r) => (r.id === id ? { ...r, openDetail: !r.openDetail } : r));
+  renderRoomRows();
+}
+function setRoomChecked(id, checked) {
+  roomDraft = roomDraft.map((r) => (r.id === id ? { ...r, checked: !!checked } : r));
+  updateRoomSelectButton();
+}
+function updateRoomField(id, key, value) {
+  roomDraft = roomDraft.map((r) => (r.id === id ? { ...r, [key]: String(value || "") } : r));
+  setPropertyDirty(true);
+}
+function updateRoomSelectButton() {
+  const btn = document.getElementById("btnRoomToggleSelect");
+  if (!btn) return;
+  const allOn = roomDraft.length > 0 && roomDraft.every((r) => !!r.checked);
+  roomSelectAll = allOn;
+  btn.textContent = allOn ? "選択解除" : "全て選択";
+}
+function toggleSelectAllRooms() {
+  const on = !(roomDraft.length > 0 && roomDraft.every((r) => !!r.checked));
+  roomDraft = roomDraft.map((r) => ({ ...r, checked: on }));
+  renderRoomRows();
+}
+function deleteSelectedRooms() {
+  const n = roomDraft.filter((r) => r.checked).length;
+  if (!n) { alert("削除対象を選択してください"); return; }
+  if (!confirm("本当にこの項目を削除しますか？\nこの操作は取り消せません。")) return;
+  roomDraft = roomDraft.filter((r) => !r.checked);
+  if (!roomDraft.length) roomDraft.push(emptyRoomItem());
+  setPropertyDirty(true);
+  renderRoomRows();
+}
+function roomMadoriOptionsHtml(v) {
+  const curr = String(v || "");
+  return `<option value="">選択してください</option>${
+    ROOM_MADORI_OPTIONS.map((x) => `<option value="${attrEsc(x)}"${x===curr?" selected":""}>${x}</option>`).join("")
+  }`;
+}
+function renderRoomRows() {
+  const body = document.getElementById("roomRows");
+  if (!body) return;
+  body.innerHTML = roomDraft.map((r) => `
+    <tr>
+      <td>
+        <input type="checkbox" ${r.checked ? "checked" : ""} onchange="setRoomChecked('${attrEsc(r.id)}', this.checked)">
+        <input type="hidden" value="${attrEsc(r.csrfToken)}">
+        <input type="hidden" value="${attrEsc(r.id)}">
+        <input type="hidden" value="${attrEsc(r.propertyId || currentPropertyId || '')}">
+      </td>
+      <td><input class="room-row-input" value="${attrEsc(r.typeName)}" oninput="updateRoomField('${attrEsc(r.id)}','typeName',this.value)"><div style="font-size:11px;color:#789;margin-top:4px">Type</div></td>
+      <td><input class="room-row-input" value="${attrEsc(r.drawingInfo)}" oninput="updateRoomField('${attrEsc(r.id)}','drawingInfo',this.value)"></td>
+      <td><select class="room-row-input" onchange="updateRoomField('${attrEsc(r.id)}','madori',this.value)">${roomMadoriOptionsHtml(r.madori)}</select></td>
+      <td>
+        <button class="btn btn-primary-solid btn-sm" type="button" onclick="showRoomImagePanel('${attrEsc(r.id)}')">画像登録</button>
+        <div style="font-size:11px;color:#667;margin-top:4px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${dash(r.imageName || "")}</div>
+      </td>
+      <td><button class="btn btn-sm" type="button" onclick="toggleRoomDetail('${attrEsc(r.id)}')">${r.openDetail ? "閉じる" : "詳細"}</button></td>
+    </tr>
+    ${r.openDetail ? `
+    <tr class="room-detail-row">
+      <td></td>
+      <td colspan="5">
+        <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:8px">
+          <input class="room-row-input" placeholder="部屋番号" value="${attrEsc(r.roomNo)}" oninput="updateRoomField('${attrEsc(r.id)}','roomNo',this.value)">
+          <input class="room-row-input" placeholder="分譲価格" value="${attrEsc(r.salePrice)}" oninput="updateRoomField('${attrEsc(r.id)}','salePrice',this.value)">
+          <input class="room-row-input" placeholder="土地価格" value="${attrEsc(r.landPrice)}" oninput="updateRoomField('${attrEsc(r.id)}','landPrice',this.value)">
+          <input class="room-row-input" placeholder="建物価格" value="${attrEsc(r.buildingPrice)}" oninput="updateRoomField('${attrEsc(r.id)}','buildingPrice',this.value)">
+          <input class="room-row-input" placeholder="消費税" value="${attrEsc(r.tax)}" oninput="updateRoomField('${attrEsc(r.id)}','tax',this.value)">
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">
+          <input class="room-row-input" placeholder="前払い地代" value="${attrEsc(r.prepaidGroundRent)}" oninput="updateRoomField('${attrEsc(r.id)}','prepaidGroundRent',this.value)">
+          <input class="room-row-input" placeholder="権利金" value="${attrEsc(r.keyMoney)}" oninput="updateRoomField('${attrEsc(r.id)}','keyMoney',this.value)">
+          <input class="room-row-input" placeholder="値引き金額" value="${attrEsc(r.discountAmount)}" oninput="updateRoomField('${attrEsc(r.id)}','discountAmount',this.value)">
+          <input class="room-row-input" placeholder="販売期" value="${attrEsc(r.salesPhase)}" oninput="updateRoomField('${attrEsc(r.id)}','salesPhase',this.value)">
+        </div>
+      </td>
+    </tr>` : ""}
+  `).join("");
+  updateRoomSelectButton();
+}
+function parseCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let q = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (q && line[i + 1] === '"') { cur += '"'; i++; continue; }
+      q = !q; continue;
+    }
+    if (ch === "," && !q) { out.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  out.push(cur);
+  return out.map((s) => s.trim());
+}
+async function registerRoomCsv() {
+  const file = document.getElementById("roomCsvFile")?.files?.[0];
+  if (!file) { alert("CSVファイルを選択してください"); return; }
+  const text = await file.text();
+  const lines = text.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+  if (lines.length <= 1) { alert("CSVにデータがありません"); return; }
+  const header = parseCsvLine(lines[0]);
+  const idx = (name) => header.indexOf(name);
+  const next = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseCsvLine(lines[i]);
+    const r = emptyRoomItem();
+    r.typeName = cols[idx("typeName")] || "";
+    r.drawingInfo = cols[idx("drawingInfo")] || "";
+    r.madori = cols[idx("madori")] || "";
+    r.roomNo = cols[idx("roomNo")] || "";
+    r.salePrice = cols[idx("salePrice")] || "";
+    r.landPrice = cols[idx("landPrice")] || "";
+    r.buildingPrice = cols[idx("buildingPrice")] || "";
+    r.tax = cols[idx("tax")] || "";
+    r.prepaidGroundRent = cols[idx("prepaidGroundRent")] || "";
+    r.keyMoney = cols[idx("keyMoney")] || "";
+    r.discountAmount = cols[idx("discountAmount")] || "";
+    r.salesPhase = cols[idx("salesPhase")] || "";
+    next.push(r);
+  }
+  roomDraft = next.length ? next : [emptyRoomItem()];
+  setPropertyDirty(true);
+  renderRoomRows();
+  showRoomListPanel();
+}
+function downloadRoomCsvTemplate() {
+  const headers = ["typeName","drawingInfo","madori","roomNo","salePrice","landPrice","buildingPrice","tax","prepaidGroundRent","keyMoney","discountAmount","salesPhase"];
+  const blob = new Blob([headers.join(",") + "\n"], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "room_template.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+async function registerRoomImage() {
+  const file = document.getElementById("roomImageFile")?.files?.[0];
+  const alt = String(document.getElementById("roomImageAlt")?.value || "").trim();
+  if (!roomImageTargetId) { alert("対象行が見つかりません"); return; }
+  if (!file) { alert("ファイルを選択してください"); return; }
+  if (!alt) { alert("ALTテキストは必須です"); return; }
+  const ok = /(\.pdf|\.jpe?g|\.png|\.webp)$/i.test(file.name) || /^(application\/pdf|image\/jpeg|image\/png|image\/webp)$/.test(file.type);
+  if (!ok) { alert("PDF / jpg / jpeg / png / webp のみ対応です"); return; }
+  const data = await readFileAsDataUrl(file);
+  roomDraft = roomDraft.map((r) => r.id === roomImageTargetId ? { ...r, imageName: file.name, imageAlt: alt, imageData: data } : r);
+  setPropertyDirty(true);
+  renderRoomRows();
+  showRoomListPanel();
+}
+function bindDropZone(zoneId, fileInputId) {
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(fileInputId);
+  if (!zone || !input || zone.dataset.bound === "1") return;
+  zone.dataset.bound = "1";
+  ["dragenter", "dragover"].forEach((ev) => zone.addEventListener(ev, (e) => {
+    e.preventDefault();
+    zone.style.background = "#eaf4ff";
+  }));
+  ["dragleave", "drop"].forEach((ev) => zone.addEventListener(ev, (e) => {
+    e.preventDefault();
+    zone.style.background = "";
+  }));
+  zone.addEventListener("drop", (e) => {
+    const files = e.dataTransfer?.files;
+    if (!files || !files.length) return;
+    input.files = files;
+  });
+}
+function initRoomModalUi() {
+  bindDropZone("roomCsvDropZone", "roomCsvFile");
+  bindDropZone("roomImageDropZone", "roomImageFile");
+}
+async function confirmRegisterRooms() {
+  if (!confirm("登録します。よろしいですか？")) return;
+  await saveRoomInfo();
+  closeRoomModal();
 }
 
 async function renderNewPropertyForm() {
@@ -261,10 +617,17 @@ async function loadDetail() {
   const created = dateOnly(p.createdAt || p.created_at || "");
   const updated = dateOnly(p.updatedAt || p.updated_at || "");
   const totalUnits = p.totalUnits ?? p.salesUnits ?? "";
-  const remaining = p.remainingUnits ?? "";
+  const hpPublicDate = p.hpPublicDate || "";
+  const elapsedDays = elapsedDaysFrom(hpPublicDate);
   const startedVisit = p.visitStartDate || p.salesVisitStartDate || "";
   const startedSales = p.salesStartDate || "";
   const completion = p.completionDate || "";
+  roomDraft = normalizeRoomItems(p.roomItems || p.rooms || []);
+  let remaining = p.remainingUnits ?? "";
+  try {
+    const m = await fetchPropertySalesMetrics(totalUnits);
+    if (m && m.remainingUnits != null) remaining = m.remainingUnits;
+  } catch (_) {}
 
   document.getElementById("content").innerHTML = `
     <div class="page-stack">
@@ -280,11 +643,12 @@ async function loadDetail() {
 
       <section class="panel">
         <div class="cards">
+          <div class="card"><div class="k">HP公開日</div><div class="v" style="font-size:16px">${dateOnly(hpPublicDate)}</div></div>
+          <div class="card"><div class="k">経過日数</div><div class="v">${elapsedDays ? `${num(elapsedDays)}日` : "―"}</div></div>
           <div class="card"><div class="k">総戸数</div><div class="v">${num(totalUnits)}</div></div>
           <div class="card"><div class="k">残戸数</div><div class="v">${num(remaining)}</div></div>
           <div class="card"><div class="k">来場開始日</div><div class="v" style="font-size:16px">${dateOnly(startedVisit)}</div></div>
           <div class="card"><div class="k">販売開始日</div><div class="v" style="font-size:16px">${dateOnly(startedSales)}</div></div>
-          <div class="card"><div class="k">竣工予定日</div><div class="v" style="font-size:16px">${dateOnly(completion)}</div></div>
         </div>
       </section>
 
@@ -295,12 +659,28 @@ async function loadDetail() {
         </div>
         <dl class="detail-grid">
           <dt>所在地</dt><dd><input id="fAddress" class="field-input" value="${dash(p.address || p.location) === "―" ? "" : dash(p.address || p.location)}"></dd>
-          <dt>物件スペック</dt><dd>${dash(p.specs || p.propertySpec)}</dd>
-          <dt>関連会社</dt><dd>${dash(p.relatedCompany || p.company)}</dd>
-          <dt>物件の特徴</dt><dd>${dash(p.features || p.description)}</dd>
+          <dt>物件スペック</dt><dd><input id="fSpecs" class="field-input" value="${dash(p.specs || p.propertySpec) === "―" ? "" : attrEsc(dash(p.specs || p.propertySpec))}"></dd>
+          <dt>関連会社</dt><dd><input id="fRelatedCompany" class="field-input" value="${dash(p.relatedCompany || p.company) === "―" ? "" : attrEsc(dash(p.relatedCompany || p.company))}"></dd>
+          <dt>物件の特徴</dt><dd><textarea id="fFeatures" class="field-input" rows="3">${dash(p.features || p.description) === "―" ? "" : attrEsc(dash(p.features || p.description))}</textarea></dd>
           <dt>緯度</dt><dd><input id="fLat" class="field-input" value="${dash(p.latitude) === "―" ? "" : dash(p.latitude)}"></dd>
           <dt>経度</dt><dd><input id="fLng" class="field-input" value="${dash(p.longitude) === "―" ? "" : dash(p.longitude)}"></dd>
           <dt>モデルルーム所在地</dt><dd><input id="fModelRoomAddress" class="field-input" value="${dash(p.modelRoomAddress) === "―" ? "" : dash(p.modelRoomAddress)}"></dd>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <div class="sec-head">
+          <h2>販売管理設定</h2>
+          <button class="btn btn-sm" data-save-kind="sales" onclick="saveSalesSettings()">保存</button>
+        </div>
+        <dl class="detail-grid">
+          <dt>HP公開日</dt><dd><input id="fHpPublicDate" type="date" class="field-input" value="${attrEsc(toYmd(hpPublicDate))}" onchange="onSalesFieldChanged()"></dd>
+          <dt>経過日数（自動）</dt><dd><input id="fElapsedDays" class="field-input" readonly value="${elapsedDays ? `${elapsedDays}日` : ""}" placeholder="HP公開日から自動計算"></dd>
+          <dt>総戸数</dt><dd><input id="fTotalUnits" type="number" min="0" step="1" class="field-input" value="${attrEsc(String(totalUnits || ""))}" onchange="onSalesFieldChanged()"></dd>
+          <dt>残戸数（自動）</dt><dd><input id="fRemainingUnitsAuto" class="field-input" readonly value="${remaining == null || remaining === '' ? '' : String(remaining)}" placeholder="総戸数 - 契約住戸数"></dd>
+          <dt>来場開始日</dt><dd><input id="fVisitStartDate" type="date" class="field-input" value="${attrEsc(toYmd(startedVisit))}"></dd>
+          <dt>販売開始日</dt><dd><input id="fSalesStartDate" type="date" class="field-input" value="${attrEsc(toYmd(startedSales))}"></dd>
+          <dt>竣工予定日</dt><dd><input id="fCompletionDate" type="date" class="field-input" value="${attrEsc(toYmd(completion))}"></dd>
         </dl>
       </section>
 
@@ -346,11 +726,11 @@ async function loadDetail() {
       <section class="panel">
         <div class="sec-head">
           <h2>居室情報</h2>
-          <button class="btn btn-sm" data-save-kind="room" onclick="saveRoomInfo()">保存</button>
+          <button class="btn btn-primary-solid btn-sm" type="button" onclick="openRoomModal()">居室を追加・修正</button>
         </div>
         <dl class="detail-grid">
-          <dt>居室一覧</dt><dd><input id="fRoomSummary" class="field-input" value="${dash(p.roomSummary || p.roomsSummary) === "―" ? "" : dash(p.roomSummary || p.roomsSummary)}"></dd>
-          <dt>添付情報</dt><dd><textarea id="fRoomAttachment" class="field-input" rows="3">${dash(p.roomAttachment) === "―" ? "" : dash(p.roomAttachment)}</textarea></dd>
+          <dt>登録居室数</dt><dd>${num(roomDraft.length)}</dd>
+          <dt>タイプ名一覧</dt><dd>${dash(roomSummaryText(roomDraft))}</dd>
         </dl>
       </section>
 
@@ -403,6 +783,20 @@ async function loadDetail() {
   await loadPropertyHistory(id, created, updated);
   setPropertyDirty(false);
   bindPropertyDirtyTracking();
+}
+
+async function onSalesFieldChanged() {
+  const hp = document.getElementById("fHpPublicDate")?.value || "";
+  const totalUnits = document.getElementById("fTotalUnits")?.value || "";
+  const elapsed = elapsedDaysFrom(hp);
+  const elapsedEl = document.getElementById("fElapsedDays");
+  if (elapsedEl) elapsedEl.value = elapsed ? `${elapsed}日` : "";
+  try {
+    const m = await fetchPropertySalesMetrics(totalUnits);
+    const rem = m && m.remainingUnits != null ? String(m.remainingUnits) : "";
+    const remEl = document.getElementById("fRemainingUnitsAuto");
+    if (remEl) remEl.value = rem;
+  } catch (_) {}
 }
 
 async function patchMeta(patch) {
@@ -470,6 +864,12 @@ async function saveBasicInfo() {
   try {
     await patchMeta({
       address: document.getElementById("fAddress").value.trim(),
+      specs: document.getElementById("fSpecs").value.trim(),
+      propertySpec: document.getElementById("fSpecs").value.trim(),
+      relatedCompany: document.getElementById("fRelatedCompany").value.trim(),
+      company: document.getElementById("fRelatedCompany").value.trim(),
+      features: document.getElementById("fFeatures").value.trim(),
+      description: document.getElementById("fFeatures").value.trim(),
       latitude: document.getElementById("fLat").value.trim(),
       longitude: document.getElementById("fLng").value.trim(),
       modelRoomAddress: document.getElementById("fModelRoomAddress").value.trim(),
@@ -483,11 +883,41 @@ async function saveBasicInfo() {
 
 async function saveRoomInfo() {
   try {
+    const clean = roomDraft.map((r) => ({
+      ...r,
+      checked: undefined,
+      openDetail: undefined,
+      csrfToken: ROOM_CSRF_TOKEN,
+      propertyId: currentPropertyId || "",
+    })).map((r) => {
+      const out = {};
+      Object.keys(r).forEach((k) => {
+        if (r[k] !== undefined) out[k] = r[k];
+      });
+      return out;
+    });
     await patchMeta({
-      roomSummary: document.getElementById("fRoomSummary").value.trim(),
-      roomAttachment: document.getElementById("fRoomAttachment").value.trim(),
+      roomItems: clean,
+      roomSummary: roomSummaryText(roomDraft),
+      roomsSummary: roomSummaryText(roomDraft),
     });
     alert("居室情報を保存しました");
+    setPropertyDirty(false);
+    clearDirtyInputs();
+    await loadDetail();
+  } catch (e) { alert(e.message); }
+}
+
+async function saveSalesSettings() {
+  try {
+    await patchMeta({
+      hpPublicDate: document.getElementById("fHpPublicDate").value.trim(),
+      totalUnits: document.getElementById("fTotalUnits").value.trim(),
+      visitStartDate: document.getElementById("fVisitStartDate").value.trim(),
+      salesStartDate: document.getElementById("fSalesStartDate").value.trim(),
+      completionDate: document.getElementById("fCompletionDate").value.trim(),
+    });
+    alert("販売管理設定を保存しました");
     setPropertyDirty(false);
     clearDirtyInputs();
     await loadDetail();
@@ -551,6 +981,7 @@ async function loadPropertyHistory(propertyId, created, updated) {
 (async () => {
   if (!await requireAuth()) return;
   document.getElementById("header").innerHTML = renderHeader("property.html");
+  initRoomModalUi();
   window.addEventListener("beforeunload", (e) => {
     if (!propertyDirty) return;
     e.preventDefault();

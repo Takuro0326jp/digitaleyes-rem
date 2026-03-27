@@ -23,8 +23,10 @@
 .tag.master { border-color: rgba(122,74,184,.45); background: rgba(122,74,184,.08); font-weight:600; }
 .tag.admin { border-color: rgba(53,124,176,.4); background: rgba(53,124,176,.06); }
 .tag.staff { border-color: rgba(0,130,60,.35); background: rgba(0,130,60,.06); }
-.prop-checks { display:flex; flex-wrap:wrap; gap:10px; padding:10px; border:1px solid rgb(224,224,224); background:#fff; }
-.prop-checks label { display:flex; align-items:center; gap:6px; font-size:13px; color:rgb(70,83,98); }
+.prop-checks { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid rgb(224,224,224); background:#fff; align-items:stretch; }
+.prop-checks label { display:grid; grid-template-columns:20px 1fr; align-items:center; column-gap:10px; font-size:13px; color:rgb(70,83,98); width:100%; text-align:left; }
+.prop-checks input[type="checkbox"] { margin:0; flex:0 0 auto; }
+.prop-checks .prop-name { text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 </style>
 </head>
 <body>
@@ -169,7 +171,7 @@ let deleteId = null;
 
 function safePropName(p) {
   const raw = p?.name ?? p?.propertyName ?? "";
-  const s = String(raw).trim();
+  const s = String(raw).replace(/\s+/g, " ").trim();
   return s && s !== "undefined" ? s : `物件(${p?.id || "-"})`;
 }
 
@@ -389,7 +391,7 @@ function renderPropChecks(selected) {
   list.forEach((p) => {
     const checked = sel.includes(String(p.id));
     const pid = `prop_${p.id}`;
-    wrap.innerHTML += `<label><input type="checkbox" id="${pid}" value="${p.id}" ${checked ? "checked" : ""}>${safePropName(p)}</label>`;
+    wrap.innerHTML += `<label><input type="checkbox" id="${pid}" value="${p.id}" ${checked ? "checked" : ""}><span class="prop-name">${safePropName(p)}</span></label>`;
   });
   updatePropFilterHint();
 }
