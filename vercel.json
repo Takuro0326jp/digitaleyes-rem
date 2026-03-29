@@ -21,6 +21,10 @@
     "api/handler.js": {
       "maxDuration": 120,
       "includeFiles": "{*.html,data/**}"
+    },
+    "api/label_print.py": {
+      "maxDuration": 60,
+      "includeFiles": "assets/template.xlsx"
     }
   },
   "rewrites": [
