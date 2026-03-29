@@ -217,6 +217,7 @@ function publicUser(u) {
     propertyIds: u.propertyIds || [],
     activePropertyId: u.activePropertyId || null,
     loginDefaultPropertyId: u.loginDefaultPropertyId || null,
+    mustChangePassword: !!u.mustChangePassword,
   };
 }
 
@@ -969,8 +970,9 @@ const server = http.createServer(async (req, res) => {
       json(res, 400, { ok: false, message: "現在のパスワードが正しくありません" }); return;
     }
     users[ui].password = sha256(newPassword);
+    users[ui].mustChangePassword = false;
     await userStore.updateUser(users[ui]);
-    json(res, 200, { ok: true });
+    json(res, 200, { ok: true, user: publicUser(users[ui]) });
     return;
   }
 
@@ -1085,6 +1087,7 @@ const server = http.createServer(async (req, res) => {
       propertyIds: isPropertyScopedRole(role) ? propertyIds : [],
       password: passwordHash,
       activePropertyId: isPropertyScopedRole(role) ? propertyIds[0] || null : null,
+      mustChangePassword: !pwdTrim,
     });
     users.push(newUser);
     await saveUsers(users);
@@ -1241,6 +1244,7 @@ const server = http.createServer(async (req, res) => {
       if (password.length < 8) { json(res, 400, { ok: false, message: "パスワードは8文字以上にしてください" }); return; }
       if (password !== passwordConfirm) { json(res, 400, { ok: false, message: "パスワード（確認）が一致しません" }); return; }
       next.password = sha256(password);
+      next.mustChangePassword = false;
     }
     next.name = name;
     next.email = email;
@@ -1308,13 +1312,24 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const loginUrl = String(body.loginUrl || ENV.APP_LOGIN_URL || `${body.origin || ""}/login.html`).trim();
     let tempPassword = String(body.tempPassword || "").trim();
+    const idxInvite = users.findIndex((u) => u.id === target.id);
     if (!tempPassword) {
       tempPassword = randomTempPassword(12);
-      const idx = users.findIndex((u) => u.id === target.id);
-      if (idx >= 0) {
-        users[idx] = normalizeUser({ ...users[idx], password: sha256(tempPassword) });
+      if (idxInvite >= 0) {
+        users[idxInvite] = normalizeUser({
+          ...users[idxInvite],
+          password: sha256(tempPassword),
+          mustChangePassword: true,
+        });
         await saveUsers(users);
       }
+    } else if (idxInvite >= 0) {
+      users[idxInvite] = normalizeUser({
+        ...users[idxInvite],
+        password: sha256(tempPassword),
+        mustChangePassword: true,
+      });
+      await saveUsers(users);
     }
     try {
       const out = await sendAccountInviteMail(process.env, {

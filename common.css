@@ -278,3 +278,14 @@ tr:hover td { background: rgba(53,124,176,0.05) !important; }
 .schedule-cell.header { background: rgb(70,83,98); color: #fff; text-align: center; font-weight: 600; min-height: auto; padding: 8px 4px; }
 .schedule-cell.time { background: rgba(224,224,224,0.2); text-align: center; font-size: 11px; color: rgb(120,130,140); display: flex; align-items: center; justify-content: center; }
 .schedule-event { background: rgb(53,124,176); color: #fff; border-radius: 2px; padding: 2px 6px; font-size: 11px; margin-bottom: 2px; }
+
+/* ログイン・パスワード再設定ページ（正規の業務用画面である旨） */
+.login-trust-footer {
+  font-size: 11px;
+  color: rgb(130, 140, 150);
+  line-height: 1.55;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid rgb(236, 236, 236);
+  text-align: center;
+}

@@ -157,6 +157,7 @@ function publicUser(u) {
     propertyIds: Array.isArray(u.propertyIds) ? u.propertyIds.map(String) : [],
     activePropertyId: u.activePropertyId || null,
     loginDefaultPropertyId: u.loginDefaultPropertyId || null,
+    mustChangePassword: !!u.mustChangePassword,
   };
 }
 
@@ -799,6 +800,7 @@ module.exports = async (req, res) => {
       propertyIds: isPropertyScopedRole(role) ? propertyIds : [],
       password: passwordHash,
       activePropertyId: isPropertyScopedRole(role) ? propertyIds[0] || null : null,
+      mustChangePassword: !pwdTrim,
     });
 
     try {
@@ -871,6 +873,7 @@ module.exports = async (req, res) => {
       if (password.length < 8) { json(res, 400, { ok: false, message: "パスワードは8文字以上にしてください" }); return; }
       if (password !== passwordConfirm) { json(res, 400, { ok: false, message: "パスワード（確認）が一致しません" }); return; }
       next.password = sha256(password);
+      next.mustChangePassword = false;
     }
     next.name = name;
     next.email = email;
@@ -955,6 +958,14 @@ module.exports = async (req, res) => {
       const updated = normalizeUser({
         ...target,
         password: sha256(tempPassword),
+        mustChangePassword: true,
+      });
+      await userStore.updateUser(updated);
+    } else {
+      const updated = normalizeUser({
+        ...target,
+        password: sha256(tempPassword),
+        mustChangePassword: true,
       });
       await userStore.updateUser(updated);
     }
@@ -1512,12 +1523,13 @@ module.exports = async (req, res) => {
     }
     try {
       users[ui].password = sha256(newPassword);
-      await userStore.updateUser(users[ui]);
+      users[ui].mustChangePassword = false;
+      await userStore.updateUser(normalizeUser(users[ui]));
     } catch (e) {
       json(res, 500, { ok: false, message: e.message || String(e) });
       return;
     }
-    json(res, 200, { ok: true });
+    json(res, 200, { ok: true, user: publicUser(normalizeUser(users[ui])) });
     return;
   }
 

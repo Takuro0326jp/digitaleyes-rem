@@ -33,6 +33,15 @@
 #modal.dm-ng #modalEditForm select { border-color: #ef9a9a; }
 #modal.dm-ng .btn.btn-primary-solid { background: #c62828; border-color: #c62828; }
 .list-status-empty { color: rgb(160, 170, 180); font-size: 13px; user-select: none; }
+/* キーワード欄のみ（プレースホルダーが途切れない最小限の幅） */
+.filter-item-keyword {
+  flex: 0 0 340px;
+  max-width: 340px;
+}
+.filter-item-keyword input#fKeyword {
+  width: 100%;
+  box-sizing: border-box;
+}
 </style>
 </head>
 <body>
@@ -67,9 +76,9 @@
 
     <!-- 検索フィルター -->
     <div class="filter-bar">
-      <div class="filter-item">
+      <div class="filter-item filter-item-keyword">
         <label>キーワード</label>
-        <input type="text" id="fKeyword" placeholder="顧客名で検索" onkeydown="if(event.key==='Enter')search()">
+        <input type="text" id="fKeyword" placeholder="顧客名・メールアドレス・電話番号" onkeydown="if(event.key==='Enter')search()">
       </div>
       <div class="filter-item">
         <label>都道府県</label>

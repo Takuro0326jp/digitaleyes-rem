@@ -140,6 +140,14 @@ async function requireAuth() {
       Auth.setActiveProperty(data.properties[0]);
       await selectProperty(data.properties[0].id);
     } else Auth.setActiveProperty(null);
+    const pageFile =
+      typeof window !== "undefined" && window.location && window.location.pathname
+        ? String(window.location.pathname).split("/").pop() || ""
+        : "";
+    if (user.mustChangePassword && pageFile !== "settings.html") {
+      window.location.href = "settings.html?requirePw=1";
+      return false;
+    }
     return true;
   } catch { return true; /* プロキシが起動していない場合は続行 */ }
 }

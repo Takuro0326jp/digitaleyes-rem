@@ -46,14 +46,22 @@ body { display: flex; align-items: center; justify-content: center; min-height: 
   <div id="okMsg" class="ok-msg"></div>
   <button class="btn-login" id="btnLogin" onclick="login()">ログイン</button>
   <div class="note">ログイン時は2段階認証コード（メール送信）が必要です。</div>
+  <p class="login-trust-footer" role="note">本画面は DIGITALEYES が提供する、関係者向けの不動産管理システムです。心当たりがない場合は入力せず、ブラウザを閉じてください。</p>
 </div>
 <script>
 const API_BASE = window.location.protocol === "file:" ? "http://localhost:3001" : "";
 let loginChallengeToken = "";
+function remRedirectAfterLogin(user) {
+  if (user && user.mustChangePassword) {
+    window.location.href = "settings.html?requirePw=1";
+    return;
+  }
+  window.location.href = "dashboard.html";
+}
 const token = localStorage.getItem("token");
 if (token) {
   fetch(`${API_BASE}/auth/me`, { headers: { "Authorization": `Bearer ${token}` } })
-    .then(r => r.json()).then(d => { if (d.ok) window.location.href = "dashboard.html"; }).catch(()=>{});
+    .then(r => r.json()).then(d => { if (d.ok) remRedirectAfterLogin(d.user); }).catch(()=>{});
 }
 async function login() {
   const email = document.getElementById("email").value.trim();
@@ -88,7 +96,7 @@ async function login() {
       localStorage.setItem("properties", JSON.stringify(data.properties || []));
       const active = (data.properties || []).find(p => p.id === data.user.activePropertyId) || (data.properties || [])[0] || null;
       localStorage.setItem("activeProperty", JSON.stringify(active));
-      window.location.href = "dashboard.html";
+      remRedirectAfterLogin(data.user);
       return;
     }
     if (data.requires2fa && data.challengeToken) {
@@ -129,7 +137,7 @@ async function verify2fa(code) {
     localStorage.setItem("properties", JSON.stringify(data.properties));
     const active = data.properties.find(p => p.id === data.user.activePropertyId) || data.properties[0] || null;
     localStorage.setItem("activeProperty", JSON.stringify(active));
-    window.location.href = "dashboard.html";
+    remRedirectAfterLogin(data.user);
   } catch (e) {
     showErr("認証に失敗しました。時間を置いて再試行してください。");
   } finally { btn.disabled = false; btn.textContent = "認証してログイン"; }

@@ -24,6 +24,8 @@
 .pin-group-table th { background: rgb(248,249,250); font-weight: 600; position: sticky; top: 0; z-index: 1; box-shadow: 0 1px 0 rgb(230,230,230); }
 .pin-group-table tr:last-child td { border-bottom: none; }
 .pin-group-table select { width: 100%; max-width: 300px; padding: 5px 8px; font-size: 13px; }
+.pw-required-banner { max-width: 700px; margin: 0 0 20px; padding: 12px 14px; background: #fff8e6; border: 1px solid #f0c040; border-radius: 6px; font-size: 14px; line-height: 1.55; color: rgb(70,83,98); }
+.settings-optional-blocked { opacity: 0.48; pointer-events: none; user-select: none; }
 </style>
 </head>
 <body>
@@ -33,6 +35,7 @@
   <main class="main">
     <div class="page-title-bar"><h1>設定</h1></div>
 
+    <div id="settingsOptionalWrap">
     <!-- 来場ステータス（アクティブ物件＝案件ごと） -->
     <div class="settings-section">
       <div class="section-header"><h2 class="section-heading">来場ステータス</h2></div>
@@ -99,9 +102,14 @@
         </div>
       </div>
     </div>
+    </div>
 
     <!-- パスワード変更 -->
-    <div class="settings-section">
+    <div class="settings-section" id="settingsPasswordSection">
+      <div id="pwRequiredBanner" class="pw-required-banner" role="alert" style="display:none;margin-bottom:20px">
+        <strong>初回ログインのため、パスワードの変更が必要です。</strong>
+        仮パスワードでは他の画面をご利用いただけません。以下のフォームで新しいパスワードを設定してください。
+      </div>
       <div class="section-header"><h2 class="section-heading">パスワード変更</h2></div>
       <div class="form-group">
         <label>現在のパスワード</label>
@@ -158,9 +166,28 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function applyPasswordRequiredUi() {
+  const u = Auth.getUser();
+  const wrap = document.getElementById("settingsOptionalWrap");
+  const banner = document.getElementById("pwRequiredBanner");
+  const forced = !!(u && u.mustChangePassword);
+  if (banner) banner.style.display = forced ? "block" : "none";
+  if (wrap) {
+    wrap.classList.toggle("settings-optional-blocked", forced);
+    if (forced) wrap.setAttribute("aria-hidden", "true");
+    else wrap.removeAttribute("aria-hidden");
+  }
+  if (forced) {
+    const pwSec = document.getElementById("settingsPasswordSection");
+    if (pwSec) pwSec.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById("currentPassword")?.focus();
+  }
+}
+
 (async () => {
   if (!await requireAuth()) return;
   document.getElementById("header").innerHTML = renderHeader("settings.html");
+  applyPasswordRequiredUi();
   await loadVisitStatusesEditor();
   loadMapPinColorsEditor();
   await rebuildStatusPinGroupTable();
@@ -334,6 +361,17 @@ async function changePassword() {
   });
   const data = await res.json();
   if (!data.ok) { errEl.textContent = data.message; errEl.style.display = "block"; return; }
+  if (data.user && typeof data.user === "object") {
+    Auth.setUser(mergeStoredUser(data.user));
+  } else {
+    Auth.setUser(mergeStoredUser({ ...Auth.getUser(), mustChangePassword: false }));
+  }
+  applyPasswordRequiredUi();
+  try {
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState({}, "", "settings.html");
+    }
+  } catch (_) {}
   document.getElementById("pwSuccess").style.display = "block";
   document.getElementById("currentPassword").value = "";
   document.getElementById("newPassword").value = "";
