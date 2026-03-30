@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1200">
+<title>週報作成 | Real Estate Manager by DIGITALEYES</title>
+<link rel="stylesheet" href="../common.css">
+<style>
+.wr-wrap { max-width: 1180px; margin: 0 auto; min-width: 0; box-sizing: border-box; }
+.wr-weekbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  background: #fff; border: 1px solid rgb(224,224,224); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px;
+}
+.wr-weekbar label { font-size: 11px; font-weight: 600; color: rgb(100,110,120); }
+.wr-weekbar input[type="date"] { padding: 6px 10px; font-family: inherit; border: 1px solid #ced4da; border-radius: 6px; }
+.wr-weekbar button { padding: 6px 12px; border: 1px solid #ced4da; border-radius: 6px; background: #f8f9fa; cursor: pointer; font-size: 12px; }
+.wr-weekbar button:hover { background: #e9ecef; }
+.wr-weekbar select { padding: 6px 10px; border-radius: 6px; border: 1px solid #ced4da; font-size: 12px; }
+/* メインコンテンツは1カラム（プレビューは履歴直下・全幅） */
+.wr-main-stack { min-width: 0; max-width: 100%; }
+.wr-card { background: #fff; border: 1px solid rgb(224,224,224); border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+.wr-card-hd { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; font-size: 14px; font-weight: 700; color: rgb(70,83,98); }
+.wr-card-bd { padding: 14px; }
+.wr-table-wrap { overflow-x: auto; }
+.wr-table.wr-excel-table { border-collapse: collapse; font-size: 11px; min-width: 720px; width: 100%; }
+.wr-excel-table th, .wr-excel-table td { border: 1px solid #c8d3e0; padding: 0; text-align: center; vertical-align: middle; }
+.wr-excel-table .wr-th-group {
+  background: #dce7f3; color: rgb(30, 58, 110); font-weight: 700; font-size: 10px; padding: 4px 6px;
+}
+.wr-excel-table .wr-th-day {
+  background: #e8f0fc; color: rgb(30, 58, 110); font-weight: 600; font-size: 10.5px; padding: 3px 4px; min-width: 32px;
+}
+.wr-excel-table .wr-th-day.wr-weekend { background: #fef3c7; color: #92400e; }
+.wr-excel-table .wr-th-month {
+  background: #e8f0fc; color: rgb(100, 110, 120); font-size: 9.5px; padding: 3px 4px; min-width: 34px; font-weight: 600;
+}
+.wr-excel-table .wr-th-sum, .wr-excel-table .wr-th-total {
+  background: #dce7f3; color: rgb(30, 58, 110); font-weight: 700; font-size: 10.5px; padding: 3px 5px;
+}
+.wr-excel-table .wr-th-lbl {
+  text-align: left !important; padding-left: 10px !important; min-width: 100px; font-size: 11px;
+}
+.wr-excel-table .wr-row-label {
+  background: #f0f4f8; color: rgb(30, 58, 110); font-weight: 600; font-size: 11px; padding: 5px 10px; text-align: left;
+  border-right: 2px solid #c8d3e0;
+}
+.wr-excel-table .wr-row-label.wr-indent { color: rgb(100, 110, 120); font-weight: 500; padding-left: 18px; font-size: 10.5px; }
+.wr-excel-table .wr-cell-day { background: #fff; padding: 4px 3px; min-width: 32px; color: rgb(55, 65, 80); }
+.wr-excel-table .wr-cell-day.wr-has-val { background: #fffbeb; font-weight: 600; color: rgb(30, 40, 55); }
+.wr-excel-table .wr-cell-day.wr-weekend { background: #fdfaf0; }
+.wr-excel-table .wr-cell-sum { background: #eef3fa; font-weight: 700; color: rgb(30, 58, 110); padding: 4px 5px; }
+.wr-excel-table .wr-cell-month { background: #f8fafc; color: rgb(100, 110, 120); padding: 4px 3px; font-size: 10.5px; }
+.wr-excel-table .wr-cell-total { background: #e8f0fc; font-weight: 700; color: rgb(30, 58, 110); padding: 4px 5px; }
+.wr-excel-table tr.wr-row-contract .wr-row-label { color: rgb(22, 101, 52); font-weight: 700; }
+.wr-excel-table tr.wr-row-contract .wr-cell-sum { background: #d1fae5; color: #065f46; }
+.wr-excel-table tr.wr-row-contract .wr-cell-total { background: #bbf7d0; color: #065f46; }
+.wr-excel-table tr.wr-row-cancel .wr-row-label { color: #b91c1c; font-weight: 600; }
+.wr-excel-table tr.wr-row-remaining .wr-row-label { font-size: 11.5px; color: rgb(30, 58, 110); font-weight: 700; }
+.wr-excel-table tr.wr-row-remaining td { background: #f0fdf4; font-weight: 700; color: rgb(22, 101, 52); }
+.wr-excel-table tr.wr-row-remaining .wr-cell-merge { background: #d1fae5; }
+.wr-excel-table tr.wr-row-remaining .wr-cell-sum { background: #d1fae5; color: #065f46; }
+.wr-excel-table tr.wr-row-remaining .wr-cell-total { background: #bbf7d0; color: #065f46; }
+.wr-excel-table .wr-day-num { font-size: 9.5px; display: block; color: rgb(100, 110, 120); font-weight: 500; }
+.wr-flabel { font-size: 12px; font-weight: 600; color: rgb(70,83,98); margin-bottom: 4px; }
+.wr-ta { width: 100%; min-height: 72px; padding: 8px 10px; border: 1px solid #ced4da; border-radius: 6px; font-family: inherit; font-size: 13px; resize: vertical; box-sizing: border-box; }
+.wr-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #f0f0f0; }
+.wr-preview {
+  margin-bottom: 16px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.wr-preview h3 { font-size: 13px; margin: 0 0 8px; color: rgb(53,124,176); }
+.wr-preview .kv { display: grid; grid-template-columns: 88px 1fr; gap: 4px 8px; margin-bottom: 10px; }
+.wr-preview .k { color: rgb(120,130,140); }
+.wr-toast {
+  position: fixed; bottom: 20px; right: 20px; background: rgb(40,50,60); color: #fff;
+  padding: 10px 16px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 9999;
+}
+.wr-toast.show { opacity: 1; }
+.wr-err { display: none; margin-bottom: 12px; }
+.wr-history-list { max-height: 240px; overflow-y: auto; margin-bottom: 8px; }
+.wr-hist-empty { font-size: 11px; color: rgb(150,160,170); line-height: 1.5; margin: 0; }
+.wr-hist-item {
+  display: block; width: 100%; text-align: left;
+  padding: 8px 10px; margin-bottom: 6px;
+  border: 1px solid rgb(230,230,230); border-radius: 8px;
+  background: #fafbfc; cursor: pointer; font-family: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+.wr-hist-item:hover { background: rgb(232,242,252); border-color: rgb(180,205,230); }
+.wr-hist-item.current { border-color: rgb(53,124,176); background: rgba(53,124,176,0.08); }
+.wr-hist-range { font-size: 12px; font-weight: 700; color: rgb(53,124,176); }
+.wr-hist-meta { font-size: 10px; color: rgb(130,140,150); margin-top: 2px; }
+.wr-hist-actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: stretch; margin-bottom: 6px; }
+.wr-hist-actions:last-child { margin-bottom: 0; }
+.wr-hist-del {
+  font-size: 10px; padding: 2px 8px; margin-left: 8px;
+  border: 1px solid #e8b4b4; border-radius: 6px; background: #fff; color: #b91c1c; cursor: pointer;
+}
+.wr-hist-del:hover { background: #fef2f2; }
+
+.wr-auto-badge {
+  margin-left: auto; display: flex; align-items: center; gap: 5px;
+  background: rgb(209,250,229); border: 1px solid rgb(167,243,208); border-radius: 6px;
+  padding: 5px 10px; font-size: 11px; font-weight: 600; color: rgb(6,95,70);
+}
+.wr-adot { width: 6px; height: 6px; border-radius: 50%; background: rgb(16,185,129); }
+
+/* 明細設定・テーブル */
+.wr-detail-settings-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 0 12px; border-bottom: 1px solid rgb(241,245,249); margin-bottom: 12px;
+}
+.wr-detail-settings-label { font-size: 11px; font-weight: 700; color: rgb(100,116,139); white-space: nowrap; }
+.wr-status-chips { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.wr-status-chip {
+  padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; cursor: pointer;
+  border: 1.5px solid rgb(203,213,225); background: #fff; color: rgb(100,116,139); font-family: inherit;
+}
+.wr-status-chip.on { color: #fff; border-color: transparent; }
+.wr-btn-save-settings {
+  background: rgb(241,245,249); border: 1px solid rgb(226,232,240); border-radius: 6px;
+  padding: 5px 12px; font-size: 11px; font-weight: 600; color: rgb(100,116,139); cursor: pointer; font-family: inherit;
+}
+.wr-btn-save-settings:hover { background: rgb(226,232,240); }
+.wr-detail-section { margin-bottom: 14px; }
+.wr-detail-section:last-child { margin-bottom: 0; }
+.wr-detail-section-head {
+  display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: rgb(30,58,110);
+  background: rgb(248,250,252); border-left: 4px solid rgb(59,125,216); padding: 6px 12px;
+  border-radius: 0 5px 5px 0; margin-bottom: 6px;
+}
+.wr-detail-count {
+  background: rgb(232,240,252); color: rgb(59,125,216); font-size: 10px; font-weight: 700;
+  padding: 1px 7px; border-radius: 10px;
+}
+.wr-detail-limit { font-size: 9.5px; color: rgb(148,163,184); font-weight: 400; }
+.wr-detail-no-excel { font-size: 9.5px; color: rgb(245,158,11); font-weight: 600; margin-left: auto; }
+.wr-detail-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.wr-detail-table th { background: rgb(248,250,252); border: 1px solid rgb(226,232,240); padding: 5px 8px; text-align: left; font-weight: 700; color: rgb(100,116,139); }
+.wr-detail-table td { border: 1px solid rgb(226,232,240); padding: 5px 8px; color: rgb(51,65,85); }
+.wr-detail-no-data { text-align: center; color: rgb(148,163,184); font-style: italic; padding: 10px; }
+.wr-detail-empty-state { text-align: center; padding: 24px; color: rgb(148,163,184); font-size: 12px; }
+
+/* プレビュー（モック寄せ・親枠内に収める） */
+.wr-preview-card {
+  background: #fff;
+  border: 1px solid rgb(226,232,240);
+  border-radius: 10px;
+  overflow: hidden;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.wr-prev-topbar {
+  background: rgb(30,58,110); padding: 9px 13px; display: flex; align-items: center; justify-content: space-between;
+}
+.wr-prev-topbar-title { color: #fff; font-size: 12px; font-weight: 600; }
+.wr-live-badge {
+  display: flex; align-items: center; gap: 4px; background: rgba(255,255,255,0.1);
+  border: 1px solid rgba(255,255,255,0.15); border-radius: 20px; padding: 2px 8px;
+  font-size: 9px; color: rgba(255,255,255,0.75);
+}
+.wr-prev-body {
+  padding: 14px;
+  font-size: 11px;
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
+}
+.wr-prev-doc-title { text-align: center; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 2px solid rgb(30,58,110); }
+.wr-prev-doc-title h2 {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgb(30,58,110);
+  letter-spacing: 0.2em;
+  margin: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.wr-prev-doc-title p { font-size: 10px; color: rgb(100,116,139); margin: 2px 0 0; overflow-wrap: anywhere; }
+.wr-prev-sh {
+  font-size: 9.5px; font-weight: 700; color: rgb(100,116,139); background: rgb(248,250,252);
+  border-left: 3px solid rgb(59,125,216); padding: 3px 8px; margin-bottom: 5px;
+  letter-spacing: 0.5px;
+}
+.wr-prev-section { margin-bottom: 10px; }
+.wr-prev-sm {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+.wr-psm {
+  background: rgb(248,250,252);
+  border-radius: 5px;
+  padding: 5px 3px;
+  text-align: center;
+  border: 1px solid rgb(241,245,249);
+  min-width: 0;
+}
+.wr-psm .pk { font-size: 9px; color: rgb(100,116,139); }
+.wr-psm .pv { font-size: 13px; font-weight: 700; color: rgb(30,58,110); }
+.wr-prev-text { color: rgb(51,65,85); line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.wr-prev-empty { color: rgb(203,213,225); font-style: italic; }
+.wr-prev-activity-block { margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgb(226,232,240); }
+.wr-prev-activity-block .wr-prev-sh { margin-bottom: 8px; }
+.wr-prev-mini { font-size: 9.5px; font-weight: 700; color: rgb(120,130,140); margin: 8px 0 3px; }
+.wr-prev-mini:first-child { margin-top: 0; }
+
+/* コメント登録：開閉式 */
+.wr-form-details { margin-bottom: 14px; }
+.wr-form-details > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: rgb(70,83,98);
+  background: #fff;
+  border: 1px solid rgb(224,224,224);
+  border-radius: 8px;
+  user-select: none;
+}
+.wr-form-details > summary::-webkit-details-marker { display: none; }
+.wr-form-details > summary:hover { background: rgb(250,251,252); }
+.wr-form-details[open] > summary { border-radius: 8px 8px 0 0; border-bottom: 1px solid #f0f0f0; }
+.wr-form-details .wr-form-chev {
+  font-size: 10px; color: rgb(148,163,184); transition: transform 0.15s;
+}
+.wr-form-details[open] .wr-form-chev { transform: rotate(-180deg); }
+.wr-form-details .wr-form-bd {
+  padding: 14px;
+  border: 1px solid rgb(224,224,224);
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  background: #fff;
+}
+</style>
+</head>
+<body>
+<div id="wrapper"><div id="page-wrapper">
+  <header class="header" id="header"></header>
+  <main class="main">
+    <div class="page-title-bar">
+      <h1>週報作成</h1>
+    </div>
+    <div class="wr-wrap">
+      <div id="wrErr" class="error-box wr-err"></div>
+
+      <div class="wr-weekbar">
+        <span><label for="week-start">対象週</label></span>
+        <button type="button" onclick="changeWeek(-1)">◀</button>
+        <input type="date" id="week-start" />
+        <span>〜</span>
+        <input type="date" id="week-end" readonly style="background:#f5f5f5;color:#666" />
+        <button type="button" onclick="changeWeek(1)">▶</button>
+        <span style="width:1px;height:20px;background:#dee2e6;margin:0 4px"></span>
+        <label for="week-start-day-select">週の開始</label>
+        <select id="week-start-day-select" onchange="onWeekStartDayChange(this.value)">
+          <option value="1">月曜始まり（月〜日）</option>
+          <option value="0">日曜始まり（日〜土）</option>
+        </select>
+        <div class="wr-auto-badge"><span class="wr-adot"></span>REMデータ連携済み</div>
+      </div>
+
+      <div class="wr-card" id="wr-history-card" style="margin-bottom:16px">
+        <div class="wr-card-hd" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <span>保存履歴（この物件・タップで開く）</span>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="clearAllHistory()" style="font-size:11px">履歴をすべて消去</button>
+        </div>
+        <div class="wr-card-bd" style="padding-top:10px">
+          <div id="wr-history-list" class="wr-history-list" hidden></div>
+          <p class="wr-hist-empty" id="wr-history-empty">まだありません。「履歴に保存」または「Excel ダウンロード」でここに記録されます（テキストの自動保存だけでは一覧には出ません）。</p>
+        </div>
+      </div>
+
+      <div class="wr-preview" id="wr-preview-block">
+        <div class="wr-preview-card">
+          <div class="wr-prev-topbar">
+            <div class="wr-prev-topbar-title">📄 概要・実績プレビュー</div>
+            <div class="wr-live-badge"><span class="wr-adot"></span>リアルタイム更新</div>
+          </div>
+          <div class="wr-prev-body">
+            <div class="wr-prev-section">
+              <div class="wr-prev-sh">概要</div>
+              <div class="kv" style="display:grid;grid-template-columns:72px 1fr;gap:4px 8px;font-size:11px;min-width:0">
+                <span class="k" style="color:rgb(100,116,139)">物件</span><span class="v" style="font-weight:600;min-width:0" id="pv-doc-prop">—</span>
+                <span class="k" style="color:rgb(100,116,139)">対象期間</span><span class="v" style="font-weight:600;min-width:0" id="pv-period">—</span>
+                <span class="k" style="color:rgb(100,116,139)">総戸数</span><span class="v" style="font-weight:600" id="pv-units">—</span>
+                <span class="k" style="color:rgb(100,116,139)">残契約</span><span class="v" style="font-weight:600" id="pv-remain">—</span>
+              </div>
+            </div>
+            <div class="wr-prev-section">
+              <div class="wr-prev-sh">実績（週計）</div>
+              <div class="wr-prev-sm">
+                <div class="wr-psm"><div class="pk">新規来場</div><div class="pv" id="pv-newv">—</div></div>
+                <div class="wr-psm"><div class="pk">再来場</div><div class="pv" id="pv-rev">—</div></div>
+                <div class="wr-psm"><div class="pk">申込</div><div class="pv" id="pv-app">—</div></div>
+                <div class="wr-psm"><div class="pk">契約</div><div class="pv" id="pv-con">—</div></div>
+              </div>
+            </div>
+            <div class="wr-prev-activity-block">
+              <div class="wr-prev-sh">広告・営業活動</div>
+              <div class="wr-prev-mini">先週の広告活動</div>
+              <div class="wr-prev-text wr-prev-empty" id="p-ad-last">（未入力）</div>
+              <div class="wr-prev-mini">先週の営業活動</div>
+              <div class="wr-prev-text wr-prev-empty" id="p-sales-last">（未入力）</div>
+              <div class="wr-prev-mini">今週の広告活動</div>
+              <div class="wr-prev-text wr-prev-empty" id="p-ad-this">（未入力）</div>
+              <div class="wr-prev-mini">今週の営業活動</div>
+              <div class="wr-prev-text wr-prev-empty" id="p-sales-this">（未入力）</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wr-main-stack">
+          <div class="wr-card">
+            <div class="wr-card-hd" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+              <span style="display:flex;align-items:center;gap:7px"><span aria-hidden="true">📊</span>今週の実績（Excelテーブル準拠）</span>
+              <span style="font-size:10px;color:rgb(22,101,52);font-weight:600">✓ 自動取得</span>
+            </div>
+            <div class="wr-card-bd">
+              <div class="wr-table-wrap">
+                <table class="wr-table wr-excel-table" id="statsTable">
+                  <thead>
+                    <tr id="statsHeadTop"></tr>
+                    <tr id="statsHeadSub"></tr>
+                  </thead>
+                  <tbody id="statsBody"></tbody>
+                </table>
+              </div>
+              <p style="font-size:10px;color:rgb(150,160,170);text-align:right;margin-top:6px">※ 日別・月別5列（右端＝週末日の月、左へ過去4ヶ月）。月別は当該暦月ごとの合計（右端列は当月初〜週末日まで）。累計列は物件計上日以降〜週末日までの総合計です。</p>
+            </div>
+          </div>
+
+          <div class="wr-card">
+            <div class="wr-card-hd" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+              <span style="display:flex;align-items:center;gap:7px"><span aria-hidden="true">👥</span>明細（対象者リスト）</span>
+              <span style="font-size:10px;color:rgb(148,163,184)">表示・Excel に出すステータスを選択</span>
+            </div>
+            <div class="wr-card-bd">
+              <div class="wr-detail-settings-bar">
+                <span class="wr-detail-settings-label">表示・出力する明細：</span>
+                <div class="wr-status-chips" id="status-chips"></div>
+                <button type="button" class="wr-btn-save-settings" onclick="saveDetailSettings()">設定を保存</button>
+              </div>
+              <div id="detail-tables-container">
+                <div class="wr-detail-empty-state">週を選択し集計が完了するとデータが表示されます</div>
+              </div>
+            </div>
+          </div>
+
+          <details class="wr-form-details" id="wr-form-details">
+            <summary class="wr-form-summary">
+              <span style="display:flex;align-items:center;gap:7px"><span aria-hidden="true">✏️</span>活動報告登録</span>
+              <span class="wr-form-chev" aria-hidden="true">▼</span>
+            </summary>
+            <div class="wr-form-bd">
+              <p style="font-size:11px;color:rgb(130,140,150);margin:0 0 8px;line-height:1.5">広告・営業・依頼・備考を入力します。閉じても内容は消えません。</p>
+              <p style="font-size:11px;color:rgb(100,150,130);margin:0 0 12px;line-height:1.5">
+                テキストは約1.2秒後に<strong>この端末へ自動保存</strong>されます（ボタン不要）。上部の履歴に載せるときだけ「履歴に保存」を押してください。
+                <span id="wr-autosave-time" style="display:block;margin-top:4px;color:rgb(130,140,150);font-size:10px"></span>
+              </p>
+              <div style="font-size:10px;font-weight:700;color:rgb(148,163,184);margin-bottom:8px">先週の活動報告</div>
+              <div class="wr-flabel">先週の広告活動</div>
+              <textarea class="wr-ta" id="ad-last" rows="3" placeholder="媒体・配信内容など" oninput="onWeeklyFormInput()"></textarea>
+              <div class="wr-flabel" style="margin-top:10px">先週の営業活動</div>
+              <textarea class="wr-ta" id="sales-last" rows="3" oninput="onWeeklyFormInput()"></textarea>
+              <div style="font-size:10px;font-weight:700;color:rgb(148,163,184);margin:14px 0 8px">今週の活動計画</div>
+              <div class="wr-flabel">今週の広告活動</div>
+              <textarea class="wr-ta" id="ad-this" rows="3" oninput="onWeeklyFormInput()"></textarea>
+              <div class="wr-flabel" style="margin-top:10px">今週の営業活動</div>
+              <textarea class="wr-ta" id="sales-this" rows="3" oninput="onWeeklyFormInput()"></textarea>
+              <div style="font-size:10px;font-weight:700;color:rgb(148,163,184);margin:14px 0 8px">その他</div>
+              <div class="wr-flabel">依頼事項</div>
+              <textarea class="wr-ta" id="request" rows="2" oninput="onWeeklyFormInput()"></textarea>
+              <div class="wr-flabel" style="margin-top:10px">備考</div>
+              <textarea class="wr-ta" id="notes" rows="2" oninput="onWeeklyFormInput()"></textarea>
+              <div class="wr-actions">
+                <button type="button" class="btn btn-secondary-solid btn-sm" onclick="saveDraftToHistory()">履歴に保存</button>
+                <button type="button" class="btn btn-primary-solid btn-sm" onclick="downloadExcel()">Excel ダウンロード</button>
+              </div>
+            </div>
+          </details>
+      </div>
+    </div>
+  </main>
+</div></div>
+<div class="wr-toast" id="toast"></div>
+<script src="../common.js"></script>
+<script>
+const DRAFT_KEY = "weekly-report-draft";
+const HISTORY_KEY = "weekly-report-history-v1";
+const HISTORY_MAX = 50;
+
+const DEFAULT_DETAIL_STATUSES = ["申込", "申込キャンセル", "契約", "解約"];
+const ALL_STATUSES = [
+  { key: "申込", color: "#2563eb", hasExcel: true, maxRows: 9 },
+  { key: "申込キャンセル", color: "#f59e0b", hasExcel: true, maxRows: 2 },
+  { key: "契約", color: "#10b981", hasExcel: true, maxRows: 8 },
+  { key: "解約", color: "#ef4444", hasExcel: true, maxRows: 2 },
+  { key: "新規来場", color: "#8b5cf6", hasExcel: false, maxRows: null },
+  { key: "再来場", color: "#0891b2", hasExcel: false, maxRows: null },
+  { key: "再々来場", color: "#6366f1", hasExcel: false, maxRows: null },
+];
+
+const COL_ATTR = {
+  部屋番号: "roomNumber",
+  金額: "price",
+  氏名: "name",
+  申込日: "applicationDate",
+  手付金: "deposit",
+  契約日: "contractDate",
+  キャンセル日: "cancelDate",
+  解約日: "cancellationDate",
+  来場日: "visitDate",
+  担当: "staff",
+  反響元: "withholding",
+  備考: "notes",
+};
+
+const STATUS_COLUMNS = {
+  申込: ["部屋番号", "金額", "氏名", "申込日", "手付金", "契約日", "担当", "反響元"],
+  申込キャンセル: ["部屋番号", "金額", "氏名", "申込日", "手付金", "キャンセル日", "担当", "備考"],
+  契約: ["部屋番号", "金額", "氏名", "申込日", "手付金", "契約日", "担当", "反響元"],
+  解約: ["部屋番号", "金額", "氏名", "契約日", "手付金", "解約日", "担当", "備考"],
+  新規来場: ["部屋番号", "氏名", "来場日", "担当"],
+  再来場: ["部屋番号", "氏名", "来場日", "担当"],
+  再々来場: ["部屋番号", "氏名", "来場日", "担当"],
+};
+
+function weekStartDayStorageKey() {
+  const id = Auth.getActiveProperty()?.id;
+  return id ? `weekStartDay:${id}` : "weekStartDay";
+}
+
+function detailSettingsKey() {
+  const id = Auth.getActiveProperty()?.id || "none";
+  return `rem-detail-statuses:${id}`;
+}
+
+function getSelectedStatuses() {
+  try {
+    const raw = localStorage.getItem(detailSettingsKey());
+    if (raw) {
+      const a = JSON.parse(raw);
+      if (Array.isArray(a) && a.length) return a;
+    }
+  } catch (_) {}
+  return [...DEFAULT_DETAIL_STATUSES];
+}
+
+function saveSelectedStatuses(list) {
+  try {
+    localStorage.setItem(detailSettingsKey(), JSON.stringify(list));
+  } catch (_) {}
+}
+
+function escHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function renderStatusChips() {
+  const container = document.getElementById("status-chips");
+  if (!container) return;
+  const selected = getSelectedStatuses();
+  container.innerHTML = ALL_STATUSES.map((s) => {
+    const isOn = selected.includes(s.key);
+    const onCls = isOn ? " on" : "";
+    const style = isOn ? ` style="background:${s.color};color:#fff;border-color:${s.color}"` : "";
+    const hint = s.hasExcel ? "" : " ⓘ";
+    return `<button type="button" class="wr-status-chip${onCls}" data-status="${escHtml(s.key)}"${style} onclick="toggleStatusChip(this)">${escHtml(s.key)}${hint}</button>`;
+  }).join("");
+}
+
+function toggleStatusChip(el) {
+  const key = el.dataset.status;
+  const s = ALL_STATUSES.find((x) => x.key === key);
+  if (!s) return;
+  el.classList.toggle("on");
+  const on = el.classList.contains("on");
+  if (on) {
+    el.style.background = s.color;
+    el.style.color = "#fff";
+    el.style.borderColor = s.color;
+  } else {
+    el.style.background = "";
+    el.style.color = "";
+    el.style.borderColor = "";
+  }
+}
+
+function saveDetailSettings() {
+  const selected = [...document.querySelectorAll(".wr-status-chip.on")].map((el) => el.dataset.status);
+  saveSelectedStatuses(selected.length ? selected : [...DEFAULT_DETAIL_STATUSES]);
+  renderDetailTables();
+  toast("明細の表示設定を保存しました");
+}
+
+function renderDetailTables() {
+  const container = document.getElementById("detail-tables-container");
+  if (!container) return;
+  const selected = getSelectedStatuses();
+  const customers = window.currentWeekCustomers || [];
+  if (!selected.length) {
+    container.innerHTML = '<div class="wr-detail-empty-state">表示するステータスを選んでください</div>';
+    return;
+  }
+  const html = selected
+    .map((status) => {
+      const cols = STATUS_COLUMNS[status];
+      if (!cols) return "";
+      const meta = ALL_STATUSES.find((x) => x.key === status);
+      const subset = customers.filter((c) => c && c.status === status);
+      const rows =
+        subset.length > 0
+          ? subset
+              .map((c) => {
+                const tds = cols
+                  .map((col) => {
+                    const attr = COL_ATTR[col];
+                    const v = attr ? c[attr] : "";
+                    return `<td>${escHtml(v)}</td>`;
+                  })
+                  .join("");
+                return `<tr>${tds}</tr>`;
+              })
+              .join("")
+          : `<tr><td colspan="${cols.length}" class="wr-detail-no-data">該当なし</td></tr>`;
+      const lim = meta && meta.maxRows != null ? `<span class="wr-detail-limit">（最大${meta.maxRows}件）</span>` : "";
+      const noEx = meta && !meta.hasExcel ? '<span class="wr-detail-no-excel">※Excel出力対象外</span>' : "";
+      return `<div class="wr-detail-section">
+        <div class="wr-detail-section-head" style="border-left-color:${meta ? meta.color : "#3b7dd8"}">
+          <span>${escHtml(status)}</span>
+          <span class="wr-detail-count">${subset.length}件</span>
+          ${lim}
+          ${noEx}
+        </div>
+        <table class="wr-detail-table">
+          <thead><tr>${cols.map((c) => `<th>${escHtml(c)}</th>`).join("")}</tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    })
+    .join("");
+  container.innerHTML = html || '<div class="wr-detail-empty-state">—</div>';
+}
+
+function prevText(id, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const t = String(text || "").trim();
+  if (!t) {
+    el.textContent = "（未入力）";
+    el.classList.add("wr-prev-empty");
+  } else {
+    el.textContent = t;
+    el.classList.remove("wr-prev-empty");
+  }
+}
+
+function updatePreview() {
+  prevText("p-ad-last", document.getElementById("ad-last")?.value);
+  prevText("p-sales-last", document.getElementById("sales-last")?.value);
+  prevText("p-ad-this", document.getElementById("ad-this")?.value);
+  prevText("p-sales-this", document.getElementById("sales-this")?.value);
+}
+
+function getWeekBounds(date, startDay) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const currentDay = d.getDay();
+  let diff = currentDay - startDay;
+  if (diff < 0) diff += 7;
+  const start = new Date(d);
+  start.setDate(d.getDate() - diff);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return { start, end };
+}
+
+function toDateStr(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function addDaysStr(ymd, n) {
+  const [y, mo, da] = ymd.split("-").map(Number);
+  const d = new Date(y, mo - 1, da);
+  d.setDate(d.getDate() + n);
+  return toDateStr(d);
+}
+
+function readWeekStartDayNum() {
+  const prop = Auth.getActiveProperty();
+  const ws = String(prop?.week_start_day || "").toLowerCase();
+  if (ws === "sunday") return 0;
+  if (ws === "monday") return 1;
+  const key = weekStartDayStorageKey();
+  let raw = localStorage.getItem(key);
+  if (raw == null) raw = localStorage.getItem("weekStartDay");
+  const v = parseInt(raw ?? "1", 10);
+  return v === 0 ? 0 : 1;
+}
+
+function showErr(msg) {
+  const el = document.getElementById("wrErr");
+  if (!msg) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.style.display = "block";
+  el.textContent = msg;
+}
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 2500);
+}
+
+function onWeekStartChanged() {
+  const startDay = readWeekStartDayNum();
+  const raw = document.getElementById("week-start").value;
+  if (!raw) return;
+  const { start, end } = getWeekBounds(new Date(raw + "T12:00:00"), startDay);
+  document.getElementById("week-start").value = toDateStr(start);
+  document.getElementById("week-end").value = toDateStr(end);
+  onWeekChange();
+}
+
+function changeWeek(dir) {
+  const raw = document.getElementById("week-start").value;
+  if (!raw) return;
+  const s = new Date(raw + "T12:00:00");
+  s.setDate(s.getDate() + dir * 7);
+  const startDay = readWeekStartDayNum();
+  const { start, end } = getWeekBounds(s, startDay);
+  document.getElementById("week-start").value = toDateStr(start);
+  document.getElementById("week-end").value = toDateStr(end);
+  onWeekChange();
+}
+
+function onWeekStartDayChange(val) {
+  localStorage.setItem(weekStartDayStorageKey(), val);
+  const { start, end } = getWeekBounds(new Date(), parseInt(val, 10));
+  document.getElementById("week-start").value = toDateStr(start);
+  document.getElementById("week-end").value = toDateStr(end);
+  onWeekChange();
+  toast("週の開始曜日を変更しました");
+}
+
+let lastStats = null;
+
+/** 週開始日 input の暦日に対する曜日（0–6）。API 検証と同一（UTC・TZずれ防止） */
+function ymdUtcWeekdayStr(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || "").trim());
+  if (!m) return "1";
+  return String(new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay());
+}
+
+async function onWeekChange() {
+  showErr("");
+  const prop = Auth.getActiveProperty();
+  if (!prop) {
+    showErr("物件を選択してください。");
+    document.getElementById("pv-doc-prop").textContent = "—";
+    window.currentWeekCustomers = [];
+    renderDetailTables();
+    return;
+  }
+  const start = document.getElementById("week-start").value;
+  const end = document.getElementById("week-end").value;
+  if (!start || !end) return;
+
+  document.getElementById("pv-doc-prop").textContent =
+    String(prop.name || prop.propertyName || prop.id || "—");
+  document.getElementById("pv-period").textContent = `${start} 〜 ${end}`;
+  document.getElementById("pv-units").textContent =
+    prop.totalUnits || prop.total_units ? `${prop.totalUnits || prop.total_units} 戸` : "—";
+
+  try {
+    const qs = new URLSearchParams({
+      propertyId: String(prop.id),
+      start,
+      end,
+      weekStartDay: ymdUtcWeekdayStr(start),
+    });
+    const res = await fetch(`${CONFIG.API_BASE}/local/weekly-stats?${qs}`, {
+      headers: { Authorization: `Bearer ${Auth.getToken()}` },
+    });
+    let data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.message || `集計に失敗しました（${res.status}）`);
+    }
+    if (data && data.data && typeof data.data === "object" && data.data.weekStart && data.weekStart == null) {
+      data = data.data;
+    }
+    lastStats = data;
+    renderStatsTable(data);
+    document.getElementById("pv-app").textContent = data.weekSum?.application ?? "—";
+    document.getElementById("pv-con").textContent = data.weekSum?.contract ?? "—";
+    document.getElementById("pv-newv").textContent = data.weekSum?.newVisit ?? "—";
+    document.getElementById("pv-rev").textContent = data.weekSum?.revisit ?? "—";
+    const rem = data.remainContracts;
+    document.getElementById("pv-remain").textContent =
+      rem != null && rem !== "" ? `${rem} 戸` : "—";
+    window.currentWeekCustomers = Array.isArray(data.customers) ? data.customers : [];
+    renderDetailTables();
+  } catch (e) {
+    showErr(e.message || String(e));
+    lastStats = null;
+    renderStatsTable(null);
+    window.currentWeekCustomers = [];
+    renderDetailTables();
+    document.getElementById("pv-newv").textContent = "—";
+    document.getElementById("pv-rev").textContent = "—";
+    document.getElementById("pv-remain").textContent = "—";
+  }
+  updatePreview();
+  renderHistoryList();
+}
+
+const WD = ["日", "月", "火", "水", "木", "金", "土"];
+/** サーバーと同じルール: 週末日の属する月を右端とし左へ4ヶ月（計5） */
+const WR_MONTH_COLS = 5;
+
+function monthLabelsFromWeekEnd(weekEndYmd, n = WR_MONTH_COLS) {
+  const s = String(weekEndYmd || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const end = new Date(`${s}T12:00:00`);
+  if (Number.isNaN(end.getTime())) return null;
+  const endYear = end.getFullYear();
+  const labels = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const ref = new Date(end.getFullYear(), end.getMonth() - i, 1);
+    const y = ref.getFullYear();
+    const m = ref.getMonth();
+    labels.push(y === endYear ? `${m + 1}月` : `${y}年${m + 1}月`);
+  }
+  return labels;
+}
+
+/** 週末日が分かれば常にこちらで5ヶ月見出しを出す（APIの monthLabels は補助のみ） */
+function resolveMonthLabels(data) {
+  const computed = monthLabelsFromWeekEnd(data.weekEnd, WR_MONTH_COLS);
+  if (computed) return computed;
+  const fromApi = data.monthLabels;
+  if (Array.isArray(fromApi) && fromApi.length === WR_MONTH_COLS) {
+    return fromApi.map((x) => String(x || "").trim() || "—");
+  }
+  return Array.from({ length: WR_MONTH_COLS }, () => "—");
+}
+
+function renderStatsTable(data) {
+  const top = document.getElementById("statsHeadTop");
+  const sub = document.getElementById("statsHeadSub");
+  const body = document.getElementById("statsBody");
+  top.innerHTML = "";
+  sub.innerHTML = "";
+  body.innerHTML = "";
+
+  if (!data || !data.weekStart) {
+    sub.innerHTML = "";
+    top.innerHTML =
+      '<th class="wr-th-group" colspan="99" style="padding:10px;text-align:center;font-weight:600;color:rgb(100,110,120)">集計データがありません（週を選択してください）</th>';
+    return;
+  }
+
+  const dates = [];
+  let cur = data.weekStart;
+  while (cur <= data.weekEnd) {
+    dates.push(cur);
+    cur = addDaysStr(cur, 1);
+  }
+
+  const monthLabels = resolveMonthLabels(data);
+  const nMonth = monthLabels.length;
+
+  top.innerHTML =
+    `<th class="wr-th-group wr-th-lbl" rowspan="2">ステータス</th>` +
+    `<th class="wr-th-group" colspan="${dates.length}">日　別</th>` +
+    `<th class="wr-th-sum" rowspan="2">週計</th>` +
+    `<th class="wr-th-group" colspan="${nMonth}">月　別</th>` +
+    `<th class="wr-th-total" rowspan="2">累計</th>`;
+
+  let subHtml = "";
+  dates.forEach((d) => {
+    const dt = new Date(d + "T12:00:00");
+    const w = dt.getDay();
+    const we = w === 0 || w === 6 ? " wr-weekend" : "";
+    subHtml += `<th class="wr-th-day${we}"><span class="wr-day-num">${dt.getMonth() + 1}/${dt.getDate()}</span>${WD[w]}</th>`;
+  });
+  monthLabels.forEach((ml) => {
+    subHtml += `<th class="wr-th-month">${ml}</th>`;
+  });
+  sub.innerHTML = subHtml;
+
+  const rows = (data.labels || []).filter((r) => r.id !== "remainContracts");
+  rows.forEach((row) => {
+    const id = row.id;
+    let trClass = "";
+    if (id === "contract") trClass = "wr-row-contract";
+    if (id === "cancellation") trClass = "wr-row-cancel";
+    const tr = document.createElement("tr");
+    if (trClass) tr.className = trClass;
+
+    const lblCls = "wr-row-label" + (id === "cancellation" ? " wr-indent" : "");
+    let html = `<td class="${lblCls}">${row.label}</td>`;
+    const daily = (data.daily && data.daily[id]) || [];
+    dates.forEach((dStr, i) => {
+      const v = daily[i] != null ? daily[i] : "";
+      const dt = new Date(dStr + "T12:00:00");
+      const w = dt.getDay();
+      const we = w === 0 || w === 6 ? " wr-weekend" : "";
+      const hv = Number(v) > 0 ? " wr-has-val" : "";
+      html += `<td class="wr-cell-day${we}${hv}">${v}</td>`;
+    });
+    html += `<td class="wr-cell-sum">${data.weekSum?.[id] ?? ""}</td>`;
+    const mon = (data.monthly && data.monthly[id]) || [];
+    for (let mi = 0; mi < nMonth; mi++) {
+      const mv = mon[mi];
+      html += `<td class="wr-cell-month">${mv === undefined || mv === null ? "" : mv}</td>`;
+    }
+    html += `<td class="wr-cell-total">${data.totalSum?.[id] ?? ""}</td>`;
+    tr.innerHTML = html;
+    body.appendChild(tr);
+  });
+
+  const rem = data.remainContracts ?? "";
+  const trRem = document.createElement("tr");
+  trRem.className = "wr-row-remaining";
+  trRem.innerHTML =
+    `<td class="wr-row-label">残契約数</td>` +
+    `<td colspan="${dates.length}" class="wr-cell-merge"></td>` +
+    `<td class="wr-cell-sum">${rem}</td>` +
+    `<td colspan="${nMonth}" class="wr-cell-merge"></td>` +
+    `<td class="wr-cell-total">${rem}</td>`;
+  body.appendChild(trRem);
+}
+
+let _autoDraftLocalTimer = null;
+const AUTO_DRAFT_LOCAL_MS = 1200;
+
+function draftStorageKey() {
+  const id = Auth.getActiveProperty()?.id || "none";
+  return `${DRAFT_KEY}:${id}`;
+}
+
+/** 下書きを localStorage のみ更新（履歴・トーストなし） */
+function persistDraftLocalOnly() {
+  if (!Auth.getActiveProperty()) return;
+  try {
+    const payload = collectFormPayload("draft");
+    localStorage.setItem(draftStorageKey(), JSON.stringify(payload));
+    const t = document.getElementById("wr-autosave-time");
+    if (t) {
+      t.textContent = `最終の自動保存: ${new Date().toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "medium" })}`;
+    }
+  } catch (_) {}
+}
+
+function scheduleAutoDraftLocal() {
+  if (_autoDraftLocalTimer) clearTimeout(_autoDraftLocalTimer);
+  _autoDraftLocalTimer = setTimeout(() => {
+    _autoDraftLocalTimer = null;
+    persistDraftLocalOnly();
+  }, AUTO_DRAFT_LOCAL_MS);
+}
+
+function flushAutoDraftLocal() {
+  if (_autoDraftLocalTimer) {
+    clearTimeout(_autoDraftLocalTimer);
+    _autoDraftLocalTimer = null;
+  }
+  persistDraftLocalOnly();
+}
+
+function onWeeklyFormInput() {
+  updatePreview();
+  scheduleAutoDraftLocal();
+}
+
+function historyStorageKey() {
+  const id = Auth.getActiveProperty()?.id || "none";
+  return `${HISTORY_KEY}:${id}`;
+}
+
+function loadHistoryList() {
+  try {
+    const raw = localStorage.getItem(historyStorageKey());
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function upsertHistoryEntry(entry) {
+  const list = loadHistoryList().filter((x) => x && x.weekStart !== entry.weekStart);
+  list.unshift(entry);
+  const trimmed = list.slice(0, HISTORY_MAX);
+  try {
+    localStorage.setItem(historyStorageKey(), JSON.stringify(trimmed));
+  } catch (_) {
+    toast("履歴の保存に失敗しました（容量超過の可能性）");
+  }
+}
+
+function collectFormPayload(kind) {
+  return {
+    weekStart: document.getElementById("week-start").value,
+    weekEnd: document.getElementById("week-end").value,
+    adLast: document.getElementById("ad-last").value,
+    salesLast: document.getElementById("sales-last").value,
+    adThis: document.getElementById("ad-this").value,
+    salesThis: document.getElementById("sales-this").value,
+    request: document.getElementById("request").value,
+    notes: document.getElementById("notes").value,
+    savedAt: new Date().toISOString(),
+    kind: kind === "excel" ? "excel" : "draft",
+  };
+}
+
+function renderHistoryList() {
+  const wrap = document.getElementById("wr-history-list");
+  const empty = document.getElementById("wr-history-empty");
+  const list = loadHistoryList();
+  const curStart = document.getElementById("week-start")?.value || "";
+
+  if (!list.length) {
+    wrap.innerHTML = "";
+    wrap.hidden = true;
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  wrap.hidden = false;
+  wrap.innerHTML = list
+    .map((e, i) => {
+      const label = e.kind === "excel" ? "Excel出力" : "履歴に保存";
+      const when = e.savedAt
+        ? new Date(e.savedAt).toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" })
+        : "—";
+      const cur = e.weekStart === curStart ? " current" : "";
+      const esc = (s) =>
+        String(s ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/"/g, "&quot;")
+          .replace(/</g, "&lt;");
+      return `<div class="wr-hist-actions" style="margin-bottom:0">
+        <button type="button" class="wr-hist-item${cur}" style="flex:1;margin-bottom:0" onclick="openHistoryByIndex(${i})">
+          <div class="wr-hist-range">${esc(e.weekStart)} 〜 ${esc(e.weekEnd)}</div>
+          <div class="wr-hist-meta">${label} · ${when}</div>
+        </button>
+        <button type="button" class="wr-hist-del" onclick="removeHistoryAt(${i})" title="この履歴を削除">×</button>
+      </div>`;
+    })
+    .join("");
+}
+
+function openHistoryByIndex(idx) {
+  const list = loadHistoryList();
+  const e = list[idx];
+  if (!e || !e.weekStart) return;
+  document.getElementById("week-start").value = e.weekStart;
+  document.getElementById("week-end").value = e.weekEnd || e.weekStart;
+  document.getElementById("ad-last").value = e.adLast || "";
+  document.getElementById("sales-last").value = e.salesLast || "";
+  document.getElementById("ad-this").value = e.adThis || "";
+  document.getElementById("sales-this").value = e.salesThis || "";
+  document.getElementById("request").value = e.request || "";
+  document.getElementById("notes").value = e.notes || "";
+  renderHistoryList();
+  onWeekChange();
+  updatePreview();
+  toast("保存内容を読み込みました");
+}
+
+function removeHistoryAt(idx) {
+  const list = loadHistoryList();
+  if (idx < 0 || idx >= list.length) return;
+  list.splice(idx, 1);
+  try {
+    localStorage.setItem(historyStorageKey(), JSON.stringify(list));
+    renderHistoryList();
+    toast("この履歴を削除しました");
+  } catch (_) {}
+}
+
+function clearAllHistory() {
+  if (!confirm("この物件の週報保存履歴をすべて削除しますか？（下書きキャッシュは残ります）")) return;
+  try {
+    localStorage.removeItem(historyStorageKey());
+    renderHistoryList();
+    toast("履歴を消去しました");
+  } catch (_) {}
+}
+
+/** 明示操作: 下書きを確実に書き、保存履歴一覧にも載せる */
+function saveDraftToHistory() {
+  flushAutoDraftLocal();
+  const payload = collectFormPayload("draft");
+  try {
+    localStorage.setItem(draftStorageKey(), JSON.stringify(payload));
+    upsertHistoryEntry({ ...payload });
+    renderHistoryList();
+    toast("履歴に保存しました（下書きも更新済み）");
+  } catch (_) {
+    toast("保存に失敗しました");
+  }
+}
+
+function loadDraft() {
+  try {
+    const raw = localStorage.getItem(draftStorageKey());
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (d.weekStart) document.getElementById("week-start").value = d.weekStart;
+    if (d.weekEnd) document.getElementById("week-end").value = d.weekEnd;
+    document.getElementById("ad-last").value = d.adLast || "";
+    document.getElementById("sales-last").value = d.salesLast || "";
+    document.getElementById("ad-this").value = d.adThis || "";
+    document.getElementById("sales-this").value = d.salesThis || "";
+    document.getElementById("request").value = d.request || "";
+    document.getElementById("notes").value = d.notes || "";
+    if (d.savedAt) toast(`下書きを復元しました（${new Date(d.savedAt).toLocaleString("ja-JP")}）`);
+  } catch (_) {}
+}
+
+async function downloadExcel() {
+  const prop = Auth.getActiveProperty();
+  if (!prop) {
+    toast("物件を選択してください");
+    return;
+  }
+  showErr("");
+  const weekStart = document.getElementById("week-start").value;
+  const weekEnd = document.getElementById("week-end").value;
+  try {
+    const res = await fetch(`${CONFIG.API_BASE}/local/weekly-report-template/download`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Auth.getToken()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        propertyId: String(prop.id),
+        weekStart,
+        weekEnd,
+        adLastWeek: document.getElementById("ad-last").value,
+        salesLastWeek: document.getElementById("sales-last").value,
+        adThisWeek: document.getElementById("ad-this").value,
+        salesThisWeek: document.getElementById("sales-this").value,
+        request: document.getElementById("request").value,
+        notes: document.getElementById("notes").value,
+        detailExcelStatuses: getSelectedStatuses().filter((s) =>
+          ["申込", "申込キャンセル", "契約", "解約"].includes(s)
+        ),
+      }),
+    });
+    const ct = res.headers.get("Content-Type") || "";
+    if (!res.ok) {
+      let msg = `ダウンロードに失敗しました（${res.status}）`;
+      if (ct.includes("json")) {
+        const j = await res.json().catch(() => ({}));
+        if (j.message) msg = j.message;
+      }
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `週間報告書_${weekStart}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
+    flushAutoDraftLocal();
+    upsertHistoryEntry(collectFormPayload("excel"));
+    renderHistoryList();
+    toast("Excel をダウンロードしました（履歴に記録しました）");
+  } catch (e) {
+    showErr(e.message || String(e));
+  }
+}
+
+document.getElementById("week-start").addEventListener("change", onWeekStartChanged);
+window.addEventListener("beforeunload", () => {
+  flushAutoDraftLocal();
+});
+
+(async function init() {
+  if (!(await requireAuth())) return;
+  document.getElementById("header").innerHTML = renderHeader("pages/weekly-report.html");
+
+  const startDay = readWeekStartDayNum();
+  document.getElementById("week-start-day-select").value = String(startDay);
+  const { start, end } = getWeekBounds(new Date(), startDay);
+  document.getElementById("week-start").value = toDateStr(start);
+  document.getElementById("week-end").value = toDateStr(end);
+
+  renderStatusChips();
+  loadDraft();
+  await onWeekChange();
+  updatePreview();
+})();
+</script>
+</body>
+</html>

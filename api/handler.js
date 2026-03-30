@@ -93,7 +93,12 @@ const {
   sendPasswordResetMail,
   hasSmtpEnv,
 } = require("../lib/mailer");
-const { buildWeeklyReportBuffer } = require("../lib/weekly-report");
+const {
+  buildWeeklyReportBuffer,
+  computeDashboardWeekStats,
+  ymdUtcWeekday,
+} = require("../lib/weekly-report");
+const { buildWeeklyReportTemplateBuffer } = require("../lib/weekly-report-template");
 const { buildCustomerAnalysisReport } = require("../lib/customer-analysis");
 const { buildCustomerKarteExcelBuffer } = require("../lib/customer-karte-export");
 const { buildLabelWorkbookWithOpenpyxl } = require("../lib/label-print-openpyxl");
@@ -1980,6 +1985,114 @@ module.exports = async (req, res) => {
     } catch (e) {
       console.error("[local/property-sales-metrics]", e.stack || e);
       json(res, 500, { ok: false, message: e.message || String(e) });
+    }
+    return;
+  }
+
+  if (routePath === "/local/weekly-stats" && req.method === "GET") {
+    const me = await sessionMe(session.userId);
+    if (!me) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
+    try {
+      const propertyId = String(url.searchParams.get("propertyId") || "").trim();
+      const start = String(url.searchParams.get("start") || "").trim();
+      const end = String(url.searchParams.get("end") || "").trim();
+      if (!propertyId || !start || !end) {
+        json(res, 400, { ok: false, message: "propertyId, start, end は必須です" });
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+        json(res, 400, { ok: false, message: "start/end は YYYY-MM-DD で指定してください" });
+        return;
+      }
+      if (start > end) {
+        json(res, 400, { ok: false, message: "start は end 以下にしてください" });
+        return;
+      }
+      const weekStartDayQ = url.searchParams.get("weekStartDay");
+      if (weekStartDayQ != null && weekStartDayQ !== "") {
+        const exp = parseInt(weekStartDayQ, 10);
+        if (exp === 0 || exp === 1) {
+          const dow = ymdUtcWeekday(start);
+          if (dow !== null && dow !== exp) {
+            json(res, 400, {
+              ok: false,
+              message: `週の開始日が一致しません（${start} は${["日", "月", "火", "水", "木", "金", "土"][dow]}曜。週の開始は ${exp === 1 ? "月曜" : "日曜"} に合わせてください）`,
+            });
+            return;
+          }
+        }
+      }
+      const tk = String(me.tenantId || "1");
+      const prop = await getPropertyByIdForUser(propertyId, tk);
+      if (!prop) { json(res, 404, { ok: false, message: "物件が見つかりません" }); return; }
+      if (
+        isPropertyScopedRole(me.role) &&
+        Array.isArray(me.propertyIds) &&
+        !new Set(me.propertyIds.map(String)).has(String(propertyId))
+      ) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+      const data = await computeDashboardWeekStats(prop, start, end);
+      json(res, 200, data);
+    } catch (e) {
+      console.error("[local/weekly-stats]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || "集計に失敗しました" });
+    }
+    return;
+  }
+
+  if (routePath === "/local/weekly-report-template/download" && req.method === "POST") {
+    const me = await sessionMe(session.userId);
+    if (!me) { json(res, 401, { ok: false, message: "認証が必要です" }); return; }
+    try {
+      const body = await readJsonBody(req);
+      const propertyId = String(body.propertyId || "").trim();
+      const weekStart = String(body.weekStart || "").trim();
+      const weekEnd = String(body.weekEnd || "").trim();
+      if (!propertyId || !weekStart || !weekEnd) {
+        json(res, 400, { ok: false, message: "propertyId, weekStart, weekEnd は必須です" });
+        return;
+      }
+      const tk = String(me.tenantId || "1");
+      const prop = await getPropertyByIdForUser(propertyId, tk);
+      if (!prop) { json(res, 404, { ok: false, message: "物件が見つかりません" }); return; }
+      if (
+        isPropertyScopedRole(me.role) &&
+        Array.isArray(me.propertyIds) &&
+        !new Set(me.propertyIds.map(String)).has(String(propertyId))
+      ) {
+        json(res, 403, { ok: false, message: "権限がありません" });
+        return;
+      }
+      const buf = await buildWeeklyReportTemplateBuffer({
+        property: prop,
+        weekStart,
+        weekEnd,
+        detailExcelStatuses:
+          body.detailExcelStatuses !== undefined && Array.isArray(body.detailExcelStatuses)
+            ? body.detailExcelStatuses
+            : null,
+        texts: {
+          adLastWeek: body.adLastWeek,
+          salesLastWeek: body.salesLastWeek,
+          adThisWeek: body.adThisWeek,
+          salesThisWeek: body.salesThisWeek,
+          request: body.request,
+          notes: body.notes,
+        },
+      });
+      const name = `${String(prop.name || "物件").replace(/[\\/:*?"<>|]/g, "_")}_週間報告書_${weekStart.replace(/-/g, "")}.xlsx`;
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.statusCode = 200;
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+      res.end(Buffer.from(buf));
+    } catch (e) {
+      console.error("[local/weekly-report-template/download]", e.stack || e);
+      json(res, 500, { ok: false, message: e.message || "Excel の生成に失敗しました" });
     }
     return;
   }

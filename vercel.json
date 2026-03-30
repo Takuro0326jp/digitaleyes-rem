@@ -20,7 +20,7 @@
   "functions": {
     "api/handler.js": {
       "maxDuration": 120,
-      "includeFiles": "{*.html,data/**}"
+      "includeFiles": "{*.html,data/**,assets/templates/**}"
     },
     "api/label_print.py": {
       "maxDuration": 60,

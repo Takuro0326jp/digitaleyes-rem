@@ -40,6 +40,35 @@ const CONFIG = {
   },
 };
 
+/**
+ * アプリ内の HTML へのリンク。`pages/` 配下にいても壊れないよう http(s) では先頭 `/` を付与。
+ * file:// で `pages/` を開いているときだけ `../` を付与。
+ * @param {string} pathWithQuery 例 "dashboard.html" / "settings.html?requirePw=1"
+ */
+function appPath(pathWithQuery) {
+  const s = String(pathWithQuery || "").trim();
+  if (!s) return "/";
+  const q = s.indexOf("?");
+  const pathOnly = q >= 0 ? s.slice(0, q) : s;
+  const query = q >= 0 ? s.slice(q) : "";
+  const p = pathOnly.replace(/^\//, "");
+  if (typeof window === "undefined") return "/" + p + query;
+  if (window.location.protocol === "file:") {
+    const loc = window.location.pathname || "";
+    if (loc.includes("/pages/")) return "../" + p + query;
+    return p + query;
+  }
+  return "/" + p + query;
+}
+
+/** ナビの current 判定（先頭 / 無し・クエリ除去・小文字） */
+function navPageKey(page) {
+  return String(page || "")
+    .replace(/^\//, "")
+    .split("?")[0]
+    .toLowerCase();
+}
+
 // ── トークン管理 ───────────────────────────────
 const Auth = {
   getToken: () => localStorage.getItem("token"),
@@ -114,13 +143,13 @@ function mergeStoredUser(serverUser) {
 // ── 認証チェック（各ページで呼ぶ） ──────────────
 async function requireAuth() {
   const token = Auth.getToken();
-  if (!token) { window.location.href = "login.html"; return false; }
+  if (!token) { window.location.href = appPath("login.html"); return false; }
   try {
     const res = await fetch(`${CONFIG.API_BASE}/auth/me`, {
       headers: { "Authorization": `Bearer ${token}` }
     });
     const data = await res.json();
-    if (!data.ok) { Auth.clear(); window.location.href = "login.html"; return false; }
+    if (!data.ok) { Auth.clear(); window.location.href = appPath("login.html"); return false; }
     let user = mergeStoredUser(data.user);
     const cachedLd = readLoginDefaultCacheRaw();
     if (cachedLd && (user.loginDefaultPropertyId == null || String(user.loginDefaultPropertyId).trim() === "")) {
@@ -145,7 +174,7 @@ async function requireAuth() {
         ? String(window.location.pathname).split("/").pop() || ""
         : "";
     if (user.mustChangePassword && pageFile !== "settings.html") {
-      window.location.href = "settings.html?requirePw=1";
+      window.location.href = appPath("settings.html?requirePw=1");
       return false;
     }
     return true;
@@ -218,7 +247,7 @@ async function logout() {
     headers: { "Authorization": `Bearer ${Auth.getToken()}` }
   }).catch(() => {});
   Auth.clear();
-  window.location.href = "login.html";
+  window.location.href = appPath("login.html");
 }
 
 // ── ヘッダー描画 ───────────────────────────────
@@ -242,13 +271,14 @@ function renderHeader(currentPage) {
       const cls = p.id === active?.id ? "current" : "";
       return `<button type="button" class="prop-picker-item ${cls}" onclick="chooseProperty('${p.id}')">${lbl}</button>`;
     }).join("")
-    : `<button type="button" class="prop-picker-item" onclick="location.href='property.html'">物件未登録 → 物件管理へ</button>`;
+    : `<button type="button" class="prop-picker-item" onclick="location.href=${JSON.stringify(appPath("property.html"))}">物件未登録 → 物件管理へ</button>`;
 
   const navItems = [
     { label: "ダッシュボード", href: "dashboard.html" },
     { label: "顧客一覧", href: "customer.html" },
     { label: "顧客マッピング", href: "customer-mapping.html" },
     { label: "分析レポート", href: "analysis.html" },
+    { label: "週報作成", href: "pages/weekly-report.html", badge: "NEW" },
     { label: "ポータル管理", href: "ad.html" },
     { label: "接客スケジュール", href: "schedule.html" },
     { label: "物件管理", href: "property.html" },
@@ -265,7 +295,14 @@ function renderHeader(currentPage) {
         <span class="brand-sub">by DIGITALEYES</span>
       </div>
       <div class="sidebar-group">
-        ${navItems.map(n => `<a href="${n.href}" class="${n.href === currentPage ? "current" : ""}">${n.label}</a>`).join("")}
+        ${navItems.map((n) => {
+          const badge = n.badge
+            ? `<span class="nav-badge" aria-hidden="true">${String(n.badge).replace(/</g, "")}</span>`
+            : "";
+          const hrefOut = appPath(n.href);
+          const cur = navPageKey(n.href) === navPageKey(currentPage) ? "current" : "";
+          return `<a href="${escAttr(hrefOut)}" class="${cur}">${n.label}${badge}</a>`;
+        }).join("")}
       </div>
       <div class="sidebar-footer">
         <button class="btn-logout" onclick="logout()">ログアウト</button>
@@ -308,7 +345,7 @@ async function onPropertyChange(propertyId) {
   await selectProperty(propertyId);
   const pageFile = (location.pathname.split("/").pop() || "").toLowerCase();
   if (pageFile === "property-detail.html") {
-    location.href = `property-detail.html?id=${encodeURIComponent(propertyId)}`;
+    location.href = appPath(`property-detail.html?id=${encodeURIComponent(propertyId)}`);
     return;
   }
   location.reload();

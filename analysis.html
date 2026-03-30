@@ -72,7 +72,7 @@
         </div>
         <div class="two-col">
           <div class="section-analysis">
-            <h2>住所エリア（長岡京市内）</h2>
+            <h2>市区町村別</h2>
             <div id="tblArea"></div>
           </div>
           <div class="section-analysis">
@@ -122,6 +122,42 @@ const COL_HAN = "rgba(53,124,176,0.85)";
 const COL_RAI = "rgba(46,125,50,0.85)";
 const COL_KEI = "rgba(230,126,34,0.85)";
 const COL_MISS = "#888780";
+
+/** JIS都道府県コード1–47 ↔ 県名（サーバーと同一・チャート表示の最終変換） */
+const JIS_PREFS = [
+  "北海道","青森県","岩手県","宮城県","秋田県","山形県","福島県","茨城県","栃木県","群馬県","埼玉県","千葉県","東京都","神奈川県","新潟県","富山県","石川県","福井県","山梨県","長野県","岐阜県","静岡県","愛知県","三重県","滋賀県","京都府","大阪府","兵庫県","奈良県","和歌山県","鳥取県","島根県","岡山県","広島県","山口県","徳島県","香川県","愛媛県","高知県","福岡県","佐賀県","長崎県","熊本県","大分県","宮崎県","鹿児島県","沖縄県",
+];
+
+function analysisPrefectureLabel(lab) {
+  if (lab == null || lab === "") return "";
+  let s = String(lab).trim();
+  if (!s) return "";
+  try {
+    s = s.normalize("NFKC").trim();
+  } catch (_) {}
+  if (!s) return String(lab);
+  if (JIS_PREFS.indexOf(s) >= 0) return s;
+  const numLike = s.match(/^0*(\d+)(?:\.\d+)?$/);
+  if (numLike) {
+    const i = parseInt(numLike[1], 10);
+    if (i >= 1 && i <= JIS_PREFS.length) return JIS_PREFS[i - 1];
+  }
+  const n = Number(String(s).replace(/,/g, ""));
+  if (Number.isFinite(n)) {
+    const i = Math.trunc(n);
+    if (i >= 1 && i <= JIS_PREFS.length) return JIS_PREFS[i - 1];
+  }
+  return String(lab);
+}
+
+function normalizePrefectureAnalysisRows(d) {
+  if (!d || !Array.isArray(d.prefecture)) return d;
+  d.prefecture = d.prefecture.map((row) => ({
+    ...row,
+    label: analysisPrefectureLabel(row.label),
+  }));
+  return d;
+}
 
 let charts = [];
 
@@ -343,6 +379,7 @@ async function loadAnalysis() {
     });
     const d = await res.json();
     if (!res.ok || !d.ok) throw new Error(d.message || "取得に失敗しました");
+    normalizePrefectureAnalysisRows(d);
 
     document.getElementById("metaLine").textContent =
       `物件: ${escapeHtml(active.name || active.id)} ／ スナップショット ${d.meta?.rowCount ?? 0} 件 ／ 累計期間 ${d.meta?.totalRangeStart || ""} 〜 ${weekEnd}`;
@@ -354,7 +391,11 @@ async function loadAnalysis() {
     const limV = 16;
     makeHBar("chMedia", d.media.map((x) => x.label), d.media, limH);
     makeHBar("chPref", d.prefecture.map((x) => x.label), d.prefecture, limH);
-    renderDimTable("tblArea", d.area, "該当エリアのデータがありません（都道府県・市区の条件に合致する行のみ表示）。");
+    renderDimTable(
+      "tblArea",
+      d.area,
+      "市区町村のデータがありません（<code>city</code> 列・<code>c.city</code>・市区郡・町村、および同期時の API 生データ <code>remote_payload</code> から取得します）。"
+    );
     renderDimTable("tblHyogo", d.hyogoCities || [], "兵庫県のデータがありません。");
     makeVBar("chRent", d.rent.map((x) => x.label), d.rent, limV);
     makeVBar("chBudget", d.budget.map((x) => x.label), d.budget, limV);
